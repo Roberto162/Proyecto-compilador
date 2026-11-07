@@ -96,5 +96,28 @@ def aplicar_estilo_oscuro(root):
     )
     style.map("TCombobox", fieldbackground=[("readonly", "#181820")], foreground=[("readonly", TEXT_WHITE)])
     
-    # Etiquetas
-    style.configure("TLabel", background=FRAME_BG, foreground=TEXT_WHITE)
+    # Etiquetas y marcos que van DENTRO de un LabelFrame (mismo fondo que el contenedor)
+    style.configure("Panel.TFrame", background=FRAME_BG)
+    style.configure("Panel.TLabel", background=FRAME_BG, foreground=TEXT_WHITE)
+    # Etiquetas sobre el fondo general (barra de estado, títulos de paneles)
+    style.configure("TLabel", background=BG_DARK, foreground=TEXT_WHITE)
+
+    # Lista desplegable del Combobox (ttk no la estiliza: se configura con option_add)
+    root.option_add("*TCombobox*Listbox.background", "#181820")
+    root.option_add("*TCombobox*Listbox.foreground", TEXT_WHITE)
+    root.option_add("*TCombobox*Listbox.selectBackground", BLUE_ACCENT)
+    root.option_add("*TCombobox*Listbox.selectForeground", TEXT_WHITE)
+
+    # Barras de desplazamiento oscuras (las de ScrolledText son nativas y no aceptan tema)
+    style.configure("Vertical.TScrollbar", background="#21212B", troughcolor=BG_DARK,
+                    bordercolor=BG_DARK, arrowcolor=TEXT_MUTED, gripcount=0)
+    style.configure("Horizontal.TScrollbar", background="#21212B", troughcolor=BG_DARK,
+                    bordercolor=BG_DARK, arrowcolor=TEXT_MUTED, gripcount=0)
+    style.map("Vertical.TScrollbar", background=[("active", BLUE_ACCENT)])
+    style.map("Horizontal.TScrollbar", background=[("active", BLUE_ACCENT)])
+
+    # Casillas de selección de pases (pestaña Optimización) y panel dividido
+    style.configure("TCheckbutton", background=FRAME_BG, foreground=TEXT_WHITE, font=("Segoe UI", 9))
+    style.map("TCheckbutton", background=[("active", FRAME_BG)],
+              indicatorcolor=[("selected", BLUE_HOVER), ("!selected", "#181820")])
+    style.configure("TPanedwindow", background=BG_DARK)

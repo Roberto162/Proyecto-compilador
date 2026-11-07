@@ -1,14 +1,16 @@
 """
 interfaz/gui.py
 ===============
-Interfaz gráfica con sub-pestañas selectoras para Código Intermedio.
+Interfaz gráfica del compilador: análisis léxico, sintáctico, semántico,
+generación de código intermedio y optimización.
 """
 
+import os
 import tkinter as tk
-from tkinter import filedialog, scrolledtext, messagebox, ttk
+from tkinter import filedialog, messagebox, ttk
 from css import aplicar_estilo_oscuro, TEXT_AREA_ARGS
 
-from config import EXPRESIONES_PRUEBA_OBLIGATORIAS
+from config import EXPRESIONES_PRUEBA_OBLIGATORIAS, DIRECTORIO_TESTS
 from modulos.lexico import obtener_tabla_tokens_str, analizar_codigo
 from modulos.sintactico import preparar_tokens, AnalizadorSintactico
 from modulos.semantico import ejecutar_pipeline_completo
@@ -19,6 +21,16 @@ from modulos.codigo_intermedio import (
     obtener_cuadruplos_str
 )
 
+# Módulo de optimización de código intermedio
+from modulos.optimizacion import (
+    PASES, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
+)
+from modulos.optimizacion.bloques import exportar_dot
+from modulos.optimizacion.suite import ejecutar_suite
+
+ESPACIOS_POR_TAB = 4
+
+
 class EditorCodigo(ttk.Frame):
     """
     Componente personalizado de área de código con numeración de líneas
@@ -26,39 +38,56 @@ class EditorCodigo(ttk.Frame):
     """
     def __init__(self, parent, height=5, *args, **kwargs):
         super().__init__(parent)
-        
+
         # Canvas lateral izquierdo para renderizar los números de línea
         self.canvas_lineas = tk.Canvas(self, width=42, bg="#1e1e1e", highlightthickness=0)
         self.canvas_lineas.pack(side="left", fill="y")
-        
-        # Área principal de texto con barra de desplazamiento
-        self.txt = scrolledtext.ScrolledText(
-            self, 
-            height=height, 
-            font=("Consolas", 11), 
-            bg="#252526", 
-            fg="#d4d4d4", 
+
+        # Área principal de texto con barra de desplazamiento (ttk: respeta el tema oscuro)
+        self.vbar = ttk.Scrollbar(self, orient="vertical")
+        self.vbar.pack(side="right", fill="y")
+        self.txt = tk.Text(
+            self,
+            height=height,
+            font=("Consolas", 11),
+            bg="#252526",
+            fg="#d4d4d4",
             insertbackground="white",
-            bd=0, 
+            bd=0,
             highlightthickness=0,
+            undo=True,
             *args, **kwargs
         )
         self.txt.pack(side="right", fill="both", expand=True)
-        
+
+        # La numeración se actualiza también al arrastrar la barra de desplazamiento
+        self.vbar.configure(command=self.txt.yview)
+        self.txt.configure(yscrollcommand=self._al_desplazar)
+
         # Eventos para actualizar la numeración en tiempo real
         self.txt.bind("<KeyRelease>", self.actualizar_lineas)
         self.txt.bind("<MouseWheel>", self.actualizar_lineas)
         self.txt.bind("<Button-1>", self.actualizar_lineas)
         self.txt.bind("<Configure>", self.actualizar_lineas)
-        
+        # La sangría define los bloques: TAB inserta espacios (el léxico cuenta un tab como 1 columna)
+        self.txt.bind("<Tab>", self._insertar_espacios)
+
         self.actualizar_lineas()
+
+    def _al_desplazar(self, *args):
+        self.vbar.set(*args)
+        self.actualizar_lineas()
+
+    def _insertar_espacios(self, event=None):
+        self.txt.insert("insert", " " * ESPACIOS_POR_TAB)
+        return "break"
 
     def actualizar_lineas(self, event=None):
         self.canvas_lineas.delete("all")
-        
+
         # Dibujar la línea separadora vertical (estilo VS Code / PyCharm)
         self.canvas_lineas.create_line(41, 0, 41, self.winfo_height(), fill="#333333")
-        
+
         # Calcular y renderizar los números visibles
         i = self.txt.index("@0,0")
         while True:
@@ -72,7 +101,7 @@ class EditorCodigo(ttk.Frame):
             )
             i = self.txt.index(f"{i}+1line")
 
-    # Métodos proxy para mantener 100% la compatibilidad con tu gui.py actual
+    # Métodos proxy para usar el editor como un widget Text normal
     def get(self, *args, **kwargs):
         return self.txt.get(*args, **kwargs)
 
@@ -85,39 +114,67 @@ class EditorCodigo(ttk.Frame):
         res = self.txt.insert(*args, **kwargs)
         self.after(10, self.actualizar_lineas)
         return res
-    
+
+
+def crear_area_texto(parent, wrap="none"):
+    """Área de texto con barras de desplazamiento vertical y horizontal (para tablas anchas)."""
+    marco = ttk.Frame(parent)
+    txt = tk.Text(marco, wrap=wrap, **TEXT_AREA_ARGS)
+    sy = ttk.Scrollbar(marco, orient="vertical", command=txt.yview)
+    sx = ttk.Scrollbar(marco, orient="horizontal", command=txt.xview)
+    txt.configure(yscrollcommand=sy.set, xscrollcommand=sx.set)
+    txt.grid(row=0, column=0, sticky="nsew")
+    sy.grid(row=0, column=1, sticky="ns")
+    sx.grid(row=1, column=0, sticky="ew")
+    marco.rowconfigure(0, weight=1)
+    marco.columnconfigure(0, weight=1)
+    return marco, txt
+
+
 class InterfazCompilador:
     def __init__(self, root):
         self.root = root
         self.root.title("Compilador & Generador de Código Intermedio")
-        self.root.geometry("1020x760")
-        self.root.minsize(850, 620)
+        self.root.geometry("1100x800")
+        self.root.minsize(900, 650)
+        self.resultado_opt = None
 
         # Se aplica el estilo oscuro y se inicializan todos los componentes
         aplicar_estilo_oscuro(self.root)
         self._crear_componentes()
-        
+
+    # =====================================================================
+    # CONSTRUCCIÓN DE LA INTERFAZ
+    # =====================================================================
     def _crear_componentes(self):
         # Frame superior
         frame_top = ttk.LabelFrame(self.root, text=" Código Fuente de Entrada ", padding=10)
         frame_top.pack(fill="x", padx=10, pady=5)
 
-        self.txt_entrada = EditorCodigo(frame_top, height=6)
+        self.txt_entrada = EditorCodigo(frame_top, height=10)
         self.txt_entrada.pack(fill="both", expand=True, pady=(0, 5))
 
-        frame_btn = ttk.Frame(frame_top)
+        frame_btn = ttk.Frame(frame_top, style="Panel.TFrame")
         frame_btn.pack(fill="x")
 
         ttk.Button(frame_btn, text="📁 Cargar Archivo (.txt)", command=self.cargar_archivo).pack(side="left", padx=2)
         ttk.Button(frame_btn, text="🚀 Analizar y Generar Código", command=self.procesar_codigo).pack(side="left", padx=2)
-        # 1. Cambio: Estilo oscuro para el botón de limpiar
         ttk.Button(frame_btn, text="🧹 Limpiar", style="Secundario.TButton", command=self.limpiar_campos).pack(side="left", padx=2)
 
-        lbl_pruebas = ttk.Label(frame_btn, text=" Casos de Prueba:")
+        lbl_pruebas = ttk.Label(frame_btn, text=" Casos de Prueba:", style="Panel.TLabel")
         lbl_pruebas.pack(side="left", padx=(15, 2))
 
-        self.cb_pruebas = ttk.Combobox(frame_btn, state="readonly", width=38)
-        self.cb_pruebas['values'] = [f"{p['id']}: {p['descripcion']}" for p in EXPRESIONES_PRUEBA_OBLIGATORIAS]
+        # Casos obligatorios de config.py + programas fuente (.txt) de la carpeta /tests
+        self.casos_prueba = [(f"{p['id']}: {p['descripcion']}", p['expresion'])
+                             for p in EXPRESIONES_PRUEBA_OBLIGATORIAS]
+        if os.path.isdir(DIRECTORIO_TESTS):
+            for nombre in sorted(os.listdir(DIRECTORIO_TESTS)):
+                if nombre.endswith(".txt"):
+                    with open(os.path.join(DIRECTORIO_TESTS, nombre), "r", encoding="utf-8") as f:
+                        self.casos_prueba.append((f"tests/{nombre}", f.read()))
+
+        self.cb_pruebas = ttk.Combobox(frame_btn, state="readonly", width=42)
+        self.cb_pruebas['values'] = [nombre for nombre, _ in self.casos_prueba]
         self.cb_pruebas.pack(side="left", padx=2)
         self.cb_pruebas.bind("<<ComboboxSelected>>", self.cargar_prueba_seleccionada)
 
@@ -128,25 +185,23 @@ class InterfazCompilador:
         self.notebook = ttk.Notebook(frame_bottom)
         self.notebook.pack(fill="both", expand=True)
 
-        # 2. Cambios: Reemplazo de los colores claros por **TEXT_AREA_ARGS en cada pestaña
-
         # Tab 1: Léxico
         self.tab_lexico = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_lexico, text=" 🔤 Análisis Léxico ")
-        self.txt_lexico = scrolledtext.ScrolledText(self.tab_lexico, **TEXT_AREA_ARGS)
-        self.txt_lexico.pack(fill="both", expand=True, padx=5, pady=5)
+        marco, self.txt_lexico = crear_area_texto(self.tab_lexico)
+        marco.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Tab 2: Sintáctico
         self.tab_sintactico = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_sintactico, text=" 🌲 Análisis Sintáctico ")
-        self.txt_sintactico = scrolledtext.ScrolledText(self.tab_sintactico, **TEXT_AREA_ARGS)
-        self.txt_sintactico.pack(fill="both", expand=True, padx=5, pady=5)
+        marco, self.txt_sintactico = crear_area_texto(self.tab_sintactico)
+        marco.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Tab 3: Semántico
         self.tab_semantico = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_semantico, text=" 📊 Tabla de Símbolos & Semántica ")
-        self.txt_semantico = scrolledtext.ScrolledText(self.tab_semantico, **TEXT_AREA_ARGS)
-        self.txt_semantico.pack(fill="both", expand=True, padx=5, pady=5)
+        marco, self.txt_semantico = crear_area_texto(self.tab_semantico)
+        marco.pack(fill="both", expand=True, padx=5, pady=5)
 
         # Tab 4: Código Intermedio con Sub-Notebook
         self.tab_codigo_intermedio = ttk.Frame(self.notebook)
@@ -155,32 +210,89 @@ class InterfazCompilador:
         self.sub_notebook = ttk.Notebook(self.tab_codigo_intermedio)
         self.sub_notebook.pack(fill="both", expand=True, padx=5, pady=5)
 
-        # Sub-tab: Polaca
-        self.sub_tab_polaca = ttk.Frame(self.sub_notebook)
-        self.sub_notebook.add(self.sub_tab_polaca, text=" Notación Polaca ")
-        self.txt_polaca = scrolledtext.ScrolledText(self.sub_tab_polaca, **TEXT_AREA_ARGS)
-        self.txt_polaca.pack(fill="both", expand=True, padx=5, pady=5)
+        self.txt_polaca = self._sub_tab(self.sub_notebook, " Notación Polaca ")
+        self.txt_codigo_p = self._sub_tab(self.sub_notebook, " Código P (Pila) ")
+        self.txt_triplos = self._sub_tab(self.sub_notebook, " Triplos ")
+        self.txt_cuadruplos = self._sub_tab(self.sub_notebook, " Cuádruplos ")
 
-        # Sub-tab: Código P
-        self.sub_tab_p = ttk.Frame(self.sub_notebook)
-        self.sub_notebook.add(self.sub_tab_p, text=" Código P (Pila) ")
-        self.txt_codigo_p = scrolledtext.ScrolledText(self.sub_tab_p, **TEXT_AREA_ARGS)
-        self.txt_codigo_p.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Sub-tab: Triplos
-        self.sub_tab_triplos = ttk.Frame(self.sub_notebook)
-        self.sub_notebook.add(self.sub_tab_triplos, text=" Triplos ")
-        self.txt_triplos = scrolledtext.ScrolledText(self.sub_tab_triplos, **TEXT_AREA_ARGS)
-        self.txt_triplos.pack(fill="both", expand=True, padx=5, pady=5)
-
-        # Sub-tab: Cuádruplos
-        self.sub_tab_cuadruplos = ttk.Frame(self.sub_notebook)
-        self.sub_notebook.add(self.sub_tab_cuadruplos, text=" Cuádruplos ")
-        self.txt_cuadruplos = scrolledtext.ScrolledText(self.sub_tab_cuadruplos, **TEXT_AREA_ARGS)
-        self.txt_cuadruplos.pack(fill="both", expand=True, padx=5, pady=5)
+        # Tab 5: Optimización de Código Intermedio
+        self._crear_tab_optimizacion()
 
         self.lbl_estado = ttk.Label(self.root, text="Estado: Listo.", relief="sunken", anchor="w")
         self.lbl_estado.pack(side="bottom", fill="x")
+
+    def _sub_tab(self, notebook, titulo):
+        frame = ttk.Frame(notebook)
+        notebook.add(frame, text=titulo)
+        marco, txt = crear_area_texto(frame)
+        marco.pack(fill="both", expand=True, padx=5, pady=5)
+        return txt
+
+    def _crear_tab_optimizacion(self):
+        self.tab_optimizacion = ttk.Frame(self.notebook)
+        self.notebook.add(self.tab_optimizacion, text=" 🛠 Optimización ")
+
+        # Barra de control: pases activos + acciones
+        frame_ctrl = ttk.LabelFrame(self.tab_optimizacion, text=" Pases de optimización ", padding=6)
+        frame_ctrl.pack(fill="x", padx=5, pady=(5, 0))
+
+        self.vars_pases = {}
+        for i, (clave, (nombre, nivel, _)) in enumerate(PASES.items()):
+            var = tk.BooleanVar(value=True)
+            self.vars_pases[clave] = var
+            ttk.Checkbutton(frame_ctrl, text=f"{nivel.split(' · ')[0]}: {nombre}", variable=var).grid(
+                row=i // 3, column=i % 3, sticky="w", padx=4, pady=1)
+
+        frame_acc = ttk.Frame(frame_ctrl, style="Panel.TFrame")
+        frame_acc.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        ttk.Button(frame_acc, text="🔁 Re-optimizar", command=self.reoptimizar_actual).pack(side="left", padx=2)
+        ttk.Button(frame_acc, text="📄 Optimizar archivo .cuad", command=self.optimizar_archivo_cuad).pack(side="left", padx=2)
+        ttk.Button(frame_acc, text="🧪 Suite /tests", command=self.ejecutar_suite_gui).pack(side="left", padx=2)
+        ttk.Button(frame_acc, text="💾 Exportar reporte", style="Secundario.TButton",
+                   command=self.exportar_reporte_opt).pack(side="left", padx=2)
+
+        self.sub_notebook_opt = ttk.Notebook(self.tab_optimizacion)
+        self.sub_notebook_opt.pack(fill="both", expand=True, padx=5, pady=5)
+
+        # Sub-tab: Comparación lado a lado
+        tab_cmp = ttk.Frame(self.sub_notebook_opt)
+        self.sub_notebook_opt.add(tab_cmp, text=" Original vs Optimizado ")
+        panel = ttk.PanedWindow(tab_cmp, orient="horizontal")
+        panel.pack(fill="both", expand=True)
+        izq, der = ttk.Frame(panel), ttk.Frame(panel)
+        panel.add(izq, weight=1)
+        panel.add(der, weight=1)
+        self.lbl_opt_original = ttk.Label(izq, text=" Código original")
+        self.lbl_opt_original.pack(anchor="w")
+        marco, self.txt_opt_original = crear_area_texto(izq)
+        marco.pack(fill="both", expand=True, padx=2, pady=2)
+        self.lbl_opt_optimizado = ttk.Label(der, text=" Código optimizado")
+        self.lbl_opt_optimizado.pack(anchor="w")
+        marco, self.txt_opt_optimizado = crear_area_texto(der)
+        marco.pack(fill="both", expand=True, padx=2, pady=2)
+        for txt in (self.txt_opt_original, self.txt_opt_optimizado):
+            txt.tag_configure("eliminada", foreground="#EF5350", overstrike=True)
+            txt.tag_configure("modificada", foreground="#FFCA28")
+            txt.tag_configure("movida", foreground="#4FC3F7")
+            txt.tag_configure("nota", foreground="#81C784")
+
+        self.txt_opt_transf = self._sub_tab(self.sub_notebook_opt, " Transformaciones ")
+        self.txt_opt_bloques = self._sub_tab(self.sub_notebook_opt, " Bloques Básicos / CFG ")
+        self.txt_opt_traza = self._sub_tab(self.sub_notebook_opt, " Traza de Pases ")
+        self.txt_opt_metricas = self._sub_tab(self.sub_notebook_opt, " Métricas y Validación ")
+        self.txt_opt_suite = self._sub_tab(self.sub_notebook_opt, " Suite de Pruebas ")
+
+    # =====================================================================
+    # ENTRADA DE CÓDIGO
+    # =====================================================================
+    def _leer_codigo(self):
+        # "end-1c" quita sólo el salto final que agrega Tk; NO se hace strip() para que
+        # los números de línea de los errores coincidan con los del editor
+        return self.txt_entrada.get("1.0", "end-1c")
+
+    def _poner_codigo(self, texto):
+        self.txt_entrada.delete("1.0", tk.END)
+        self.txt_entrada.insert(tk.END, texto)
 
     def cargar_archivo(self):
         ruta = filedialog.askopenfilename(
@@ -190,59 +302,59 @@ class InterfazCompilador:
         if ruta:
             try:
                 with open(ruta, 'r', encoding='utf-8') as f:
-                    contenido = f.read()
-                    self.txt_entrada.delete("1.0", tk.END)
-                    self.txt_entrada.insert(tk.END, contenido)
-                    self.lbl_estado.config(text=f"Estado: Archivo '{ruta}' cargado con éxito.")
+                    self._poner_codigo(f.read())
+                self.lbl_estado.config(text=f"Estado: Archivo '{ruta}' cargado con éxito.")
             except Exception as e:
                 messagebox.showerror("Error de Lectura", f"No se pudo leer el archivo:\n{e}")
 
     def cargar_prueba_seleccionada(self, event):
         idx = self.cb_pruebas.current()
         if idx >= 0:
-            prueba = EXPRESIONES_PRUEBA_OBLIGATORIAS[idx]
-            self.txt_entrada.delete("1.0", tk.END)
-            self.txt_entrada.insert(tk.END, prueba['expresion'])
-            self.lbl_estado.config(text=f"Estado: Cargada {prueba['id']} - {prueba['descripcion']}")
+            nombre, codigo = self.casos_prueba[idx]
+            self._poner_codigo(codigo)
+            self.lbl_estado.config(text=f"Estado: Cargado {nombre}")
+
+    def _limpiar_resultados(self):
+        for txt in (self.txt_lexico, self.txt_sintactico, self.txt_semantico, self.txt_polaca,
+                    self.txt_codigo_p, self.txt_triplos, self.txt_cuadruplos):
+            txt.delete("1.0", tk.END)
+        self._limpiar_optimizacion()
 
     def limpiar_campos(self):
         self.txt_entrada.delete("1.0", tk.END)
-        self.txt_lexico.delete("1.0", tk.END)
-        self.txt_sintactico.delete("1.0", tk.END)
-        self.txt_semantico.delete("1.0", tk.END)
-        self.txt_polaca.delete("1.0", tk.END)
-        self.txt_codigo_p.delete("1.0", tk.END)
-        self.txt_triplos.delete("1.0", tk.END)
-        self.txt_cuadruplos.delete("1.0", tk.END)
+        self._limpiar_resultados()
+        self.cb_pruebas.set("")
+        self.resultado_opt = None
         self.lbl_estado.config(text="Estado: Campos limpiados.")
 
+    # =====================================================================
+    # ANÁLISIS COMPLETO
+    # =====================================================================
     def procesar_codigo(self):
-        codigo = self.txt_entrada.get("1.0", tk.END).strip()
-        if not codigo:
+        codigo = self._leer_codigo()
+        if not codigo.strip():
             messagebox.showwarning("Atención", "El cuadro de código fuente está vacío.")
             return
 
-        self.limpiar_campos()
-        self.txt_entrada.insert(tk.END, codigo)
+        # Sólo se limpian los resultados: el código del editor no se toca
+        self._limpiar_resultados()
 
-        # 1. Léxico
+        # 1. Léxico (errores y tabla de tokens)
         tokens_lex, err_lex = analizar_codigo(codigo)
         if err_lex:
             self.txt_lexico.insert(tk.END, "❌ ERRORES LÉXICOS DETECTADOS:\n" + "-" * 50 + "\n")
             for e in err_lex:
                 self.txt_lexico.insert(tk.END, f"-> {e}\n")
-        else:
-            self.txt_lexico.insert(tk.END, obtener_tabla_tokens_str(tokens_lex))
+            self.txt_lexico.insert(tk.END, "\n")
+        self.txt_lexico.insert(tk.END, obtener_tabla_tokens_str(tokens_lex))
 
         # 2. Sintáctico
-        tokens_sint = preparar_tokens(tokens_lex)
-        parser = AnalizadorSintactico(tokens_sint)
-        valido_sint, ast_raiz = parser.analizar()
+        parser = AnalizadorSintactico(preparar_tokens(tokens_lex))
+        parser.analizar()
 
         self.txt_sintactico.insert(tk.END, "==================================================\n")
         self.txt_sintactico.insert(tk.END, "    TRAZA DE DERIVACIÓN SINTÁCTICA (MATCHES)      \n")
         self.txt_sintactico.insert(tk.END, "==================================================\n\n")
-
         for paso in parser.traza:
             self.txt_sintactico.insert(tk.END, f"{paso}\n")
 
@@ -253,31 +365,138 @@ class InterfazCompilador:
             for e in parser.errores:
                 self.txt_sintactico.insert(tk.END, f"-> {e}\n")
 
-        # 3. Semántico
-        valido, _, _, rep_sem, tabla_rep, _ = ejecutar_pipeline_completo(codigo)
+        # 3. Semántico (el pipeline completo determina si el programa es válido)
+        valido, _, _, rep_sem, tabla_rep, ast_raiz = ejecutar_pipeline_completo(codigo)
         self.txt_semantico.insert(tk.END, f"{tabla_rep}\n\n{rep_sem}")
 
-        # 4. Generación de Código Intermedio por Selección
+        # 4. Código intermedio y 5. Optimización (sólo si no hay errores)
         if valido and ast_raiz:
             self.txt_polaca.insert(tk.END, obtener_polaca_str(ast_raiz))
             self.txt_codigo_p.insert(tk.END, obtener_codigo_p_str(ast_raiz))
             self.txt_triplos.insert(tk.END, obtener_triplos_str(ast_raiz))
             self.txt_cuadruplos.insert(tk.END, obtener_cuadruplos_str(ast_raiz))
 
+            res = optimizar_desde_ast(ast_raiz, codigo, self._pases_seleccionados(), titulo="Código fuente")
+            self.mostrar_resultado_optimizacion(res)
+
             self.notebook.select(self.tab_codigo_intermedio)
-            self.lbl_estado.config(text="Estado: Código Intermedio Generado Exitosamente ✅")
+            m = res.metricas
+            self.lbl_estado.config(
+                text=f"Estado: Código Intermedio Generado ✅ · Optimización: {m['instr_antes']} -> "
+                     f"{m['instr_despues']} instrucciones ({m['reduccion_pct']:.1f}%)")
         else:
             msg = "🚫 GENERACIÓN ABORTADA:\nNo se genera Código Intermedio si la expresión contiene errores."
-            self.txt_polaca.insert(tk.END, msg)
-            self.txt_codigo_p.insert(tk.END, msg)
-            self.txt_triplos.insert(tk.END, msg)
-            self.txt_cuadruplos.insert(tk.END, msg)
-            self.lbl_estado.config(text="Estado: Proceso completado con observaciones.")
+            for txt in (self.txt_polaca, self.txt_codigo_p, self.txt_triplos, self.txt_cuadruplos):
+                txt.insert(tk.END, msg)
+            self.resultado_opt = None
+            self._limpiar_optimizacion("🚫 OPTIMIZACIÓN ABORTADA:\nNo se optimiza código intermedio si la expresión contiene errores.")
+            # Se muestra la primera pestaña con errores
+            if err_lex:
+                self.notebook.select(self.tab_lexico)
+            elif parser.errores:
+                self.notebook.select(self.tab_sintactico)
+            else:
+                self.notebook.select(self.tab_semantico)
+            self.lbl_estado.config(text="Estado: Proceso completado con errores ❌")
+
+    # =====================================================================
+    # OPTIMIZACIÓN
+    # =====================================================================
+    def _pases_seleccionados(self):
+        return [k for k, v in self.vars_pases.items() if v.get()]
+
+    def _limpiar_optimizacion(self, mensaje=""):
+        for txt in (self.txt_opt_original, self.txt_opt_optimizado, self.txt_opt_transf,
+                    self.txt_opt_bloques, self.txt_opt_traza, self.txt_opt_metricas):
+            txt.delete("1.0", tk.END)
+            if mensaje:
+                txt.insert(tk.END, mensaje)
+
+    def mostrar_resultado_optimizacion(self, res):
+        self.resultado_opt = res
+        self._limpiar_optimizacion()
+        estados = {num: estado for num, _, estado, _, _ in reporte.estado_instrucciones(res)}
+
+        # Panel izquierdo: original coloreado según lo que le ocurrió a cada instrucción
+        for i, q in enumerate(res.original, 1):
+            estado = estados.get(q.origen, "igual")
+            self.txt_opt_original.insert(tk.END, f"({i:>2}) {q.tac()}\n",
+                                         () if estado == "igual" else (estado,))
+        # Panel derecho: optimizado con la transformación aplicada
+        for i, q in enumerate(res.optimizado, 1):
+            tag = "movida" if any(n.startswith("LICM") for n in q.notas) else ("modificada" if q.notas else ())
+            self.txt_opt_optimizado.insert(tk.END, f"({i:>2}) {q.tac()}\n", tag)
+            if q.notas:
+                self.txt_opt_optimizado.insert(tk.END, f"       ↳ {'; '.join(q.notas)}\n", "nota")
+
+        m = res.metricas
+        self.lbl_opt_original.config(
+            text=f" Código original ({m['instr_antes']} instr.)  —  rojo: eliminada · amarillo: modificada · azul: movida")
+        self.lbl_opt_optimizado.config(
+            text=f" Código optimizado ({m['instr_despues']} instr., -{m['reduccion_pct']:.1f}%)")
+
+        self.txt_opt_transf.insert(tk.END, reporte.comparacion(res) + "\n\n" +
+                                   reporte.tabla_cuadruplos(res.optimizado, "CÓDIGO OPTIMIZADO", con_notas=True))
+        if res.esperado is not None:
+            self.txt_opt_transf.insert(tk.END, "\n\n" + reporte.tabla_cuadruplos(res.esperado, "SALIDA ESPERADA DEL CASO"))
+        self.txt_opt_bloques.insert(tk.END, reporte.bloques(res))
+        self.txt_opt_traza.insert(tk.END, reporte.traza(res))
+        self.txt_opt_metricas.insert(tk.END, reporte.metricas(res))
+
+        valido = "EQUIVALENTE ✅" if m.get("equivalente") else "NO EQUIVALENTE ❌"
+        self.lbl_estado.config(text=f"Estado: Optimización '{res.titulo}': {m['instr_antes']} -> "
+                                    f"{m['instr_despues']} instrucciones ({m['reduccion_pct']:.1f}%) · {valido}")
+
+    def reoptimizar_actual(self):
+        if self.resultado_opt is None:
+            messagebox.showinfo("Optimización", "Primero analiza un código fuente o carga un archivo .cuad.")
+            return
+        self.mostrar_resultado_optimizacion(reoptimizar(self.resultado_opt, self._pases_seleccionados()))
+
+    def optimizar_archivo_cuad(self):
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar archivo de cuádruplos",
+            initialdir=DIRECTORIO_TESTS if os.path.isdir(DIRECTORIO_TESTS) else None,
+            filetypes=[("Cuádruplos", "*.cuad"), ("Todos los archivos", "*.*")]
+        )
+        if not ruta:
+            return
+        try:
+            res = optimizar_archivo_cuadruplos(ruta, self._pases_seleccionados())
+        except Exception as e:
+            messagebox.showerror("Error en cuádruplos", f"No se pudo procesar el archivo:\n{e}")
+            return
+        self.mostrar_resultado_optimizacion(res)
+        self.notebook.select(self.tab_optimizacion)
+        self.sub_notebook_opt.select(0)
+
+    def ejecutar_suite_gui(self):
+        filas = ejecutar_suite(pases_activos=self._pases_seleccionados())
+        self.txt_opt_suite.delete("1.0", tk.END)
+        self.txt_opt_suite.insert(tk.END, reporte.matriz_suite(filas))
+        self.notebook.select(self.tab_optimizacion)
+        self.sub_notebook_opt.select(len(self.sub_notebook_opt.tabs()) - 1)
+        self.lbl_estado.config(text=f"Estado: Suite ejecutada ({len(filas)} archivos).")
+
+    def exportar_reporte_opt(self):
+        if self.resultado_opt is None:
+            messagebox.showinfo("Exportar", "No hay resultados de optimización para exportar.")
+            return
+        ruta = filedialog.asksaveasfilename(defaultextension=".txt", initialfile="reporte_optimizacion.txt",
+                                            filetypes=[("Texto", "*.txt")])
+        if not ruta:
+            return
+        with open(ruta, "w", encoding="utf-8") as f:
+            f.write(reporte.reporte_completo(self.resultado_opt))
+        with open(ruta.rsplit(".", 1)[0] + "_cfg.dot", "w", encoding="utf-8") as f:
+            f.write(exportar_dot(self.resultado_opt.original, "CFG_original") + "\n\n" +
+                    exportar_dot(self.resultado_opt.optimizado, "CFG_optimizado"))
+        self.lbl_estado.config(text=f"Estado: Reporte exportado en '{ruta}' (y el CFG en .dot).")
 
 
 def ejecutar_interfaz_grafica():
     root = tk.Tk()
-    app = InterfazCompilador(root)
+    InterfazCompilador(root)
     root.mainloop()
 
 
