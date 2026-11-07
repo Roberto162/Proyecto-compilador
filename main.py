@@ -21,9 +21,8 @@ from modulos.sintactico import preparar_tokens, AnalizadorSintactico
 
 # Módulo de optimización de código intermedio
 from modulos.optimizacion import (
-    PASES, PASES_POR_DEFECTO, NIVELES, DESCRIPCION_PASES, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
+    PASES, PASES_POR_DEFECTO, NIVELES, DESCRIPCION_PASES, optimizar_desde_ast, optimizar_texto_cuadruplos, reoptimizar, reporte
 )
-from modulos.optimizacion.bloques import exportar_dot
 
 # Pases activos (se pueden activar/desactivar desde el submenú)
 PASES_ACTIVOS = list(PASES_POR_DEFECTO)
@@ -101,61 +100,39 @@ def submenu_configurar_pases():
             print(f"{Colores.ROJO}Opción inválida.{Colores.RESET}")
 
 
-def _exportar_reporte(res):
-    base = "".join(c if c.isalnum() else "_" for c in res.titulo)[:40] or "programa"
-    ruta_txt = f"reporte_optimizacion_{base}.txt"
-    ruta_dot = f"cfg_{base}.dot"
-    with open(ruta_txt, "w", encoding="utf-8") as f:
-        f.write(reporte.reporte_completo(res))
-    with open(ruta_dot, "w", encoding="utf-8") as f:
-        f.write(exportar_dot(res.original, "CFG_original") + "\n\n" + exportar_dot(res.optimizado, "CFG_optimizado"))
-    print(f"{Colores.VERDE}Reporte guardado en '{ruta_txt}' y CFG (Graphviz) en '{ruta_dot}'.{Colores.RESET}")
-
-
 def submenu_optimizacion(res):
-    """Submenú principal del optimizador para un programa ya cargado."""
+    """Submenú del optimizador (las mismas vistas que la pestaña Optimización de la GUI)."""
     while True:
         m = res.metricas
         estado = f"{Colores.VERDE}EQUIVALENTE{Colores.RESET}" if m.get("equivalente") else f"{Colores.ROJO}NO EQUIVALENTE{Colores.RESET}"
         print(f"\n{Colores.CYAN}=== OPTIMIZACIÓN DE CÓDIGO INTERMEDIO: {res.titulo} ==={Colores.RESET}")
         print(f"    {m['instr_antes']} -> {m['instr_despues']} instrucciones "
               f"({m['reduccion_pct']:.1f}% de reducción) · validación: {estado}")
-        print("1. Ver código intermedio original (cuádruplos)")
-        print("2. Fase 1: Líderes, bloques básicos y CFG")
-        print("3. Fase 2: Traza de pases de optimización (paso a paso)")
-        print("4. Ver código intermedio optimizado")
-        print("5. Comparación original vs optimizado")
-        print("6. Fase 3: Métricas y validación semántica")
-        print("7. Reporte completo")
-        print("8. Configurar pases activos y re-optimizar")
-        print("9. Exportar reporte (.txt) y CFG (.dot)")
-        print("10. Volver")
+        print("1. Original vs Optimizado")
+        print("2. Transformaciones (qué le pasó a cada instrucción)")
+        print("3. Bloques básicos y CFG")
+        print("4. Métricas y validación")
+        print("5. Configurar pases y re-optimizar")
+        print("6. Volver")
 
-        opc = input("\nSelecciona una opción (1-10): ").strip()
+        opc = input("\nSelecciona una opción (1-6): ").strip()
         if opc == "1":
-            print("\n" + reporte.tabla_cuadruplos(res.original, "CÓDIGO INTERMEDIO ORIGINAL"))
+            print("\n" + reporte.lado_a_lado(res))
         elif opc == "2":
-            print("\n" + reporte.bloques(res))
-        elif opc == "3":
-            print("\n" + reporte.traza(res))
-        elif opc == "4":
-            print("\n" + reporte.tabla_cuadruplos(res.optimizado, "CÓDIGO INTERMEDIO OPTIMIZADO", con_notas=True))
+            print("\n" + reporte.comparacion(res))
+            print("\n" + reporte.tabla_cuadruplos(res.optimizado, "CÓDIGO OPTIMIZADO", con_notas=True))
             if res.esperado is not None:
                 print("\n" + reporte.tabla_cuadruplos(res.esperado, "SALIDA ESPERADA DEL CASO"))
-        elif opc == "5":
-            print("\n" + reporte.comparacion(res))
-        elif opc == "6":
+        elif opc == "3":
+            print("\n" + reporte.bloques(res))
+        elif opc == "4":
             print("\n" + reporte.metricas(res))
-        elif opc == "7":
-            print("\n" + reporte.reporte_completo(res))
-        elif opc == "8":
+        elif opc == "5":
             submenu_configurar_pases()
             res = reoptimizar(res, PASES_ACTIVOS)
             print(f"{Colores.VERDE}Código re-optimizado con {len(PASES_ACTIVOS)} pase(s) activo(s).{Colores.RESET}")
             continue
-        elif opc == "9":
-            _exportar_reporte(res)
-        elif opc == "10":
+        elif opc == "6":
             break
         else:
             print(f"{Colores.ROJO}Opción inválida.{Colores.RESET}")
@@ -163,26 +140,27 @@ def submenu_optimizacion(res):
         _pausa()
 
 
-def _archivos_de_tests(extension):
-    """Archivos de la carpeta /tests con la extensión indicada (.cuad o .txt)."""
+def casos_de_optimizacion():
+    """Casos del optimizador: archivos .cuad de /tests (ya escritos en cuádruplos).
+    Se nombran OPT_1, OPT_2... con el título de la primera línea de comentario de cada archivo."""
     if not os.path.isdir(DIRECTORIO_TESTS):
         return []
-    return [os.path.join(DIRECTORIO_TESTS, f) for f in sorted(os.listdir(DIRECTORIO_TESTS)) if f.endswith(extension)]
+    casos = []
+    archivos = sorted(f for f in os.listdir(DIRECTORIO_TESTS) if f.endswith(".cuad"))
+    for n, nombre in enumerate(archivos, 1):
+        with open(os.path.join(DIRECTORIO_TESTS, nombre), "r", encoding="utf-8") as f:
+            texto = f.read()
+        primera = next((l.lstrip("# ").strip() for l in texto.splitlines() if l.startswith("#")), nombre)
+        titulo = primera.split(":", 1)[1].strip() if ":" in primera else primera
+        casos.append((f"OPT_{n}: {titulo} (cuádruplos)", texto, True))
+    return casos
 
 
-def menu_archivo_cuadruplos():
-    """Optimiza directamente un archivo de cuádruplos (.cuad), p. ej. los casos de /tests."""
-    archivos = _archivos_de_tests(".cuad")
-    print(f"\n{Colores.CYAN}Archivos de cuádruplos disponibles en /tests:{Colores.RESET}")
-    for i, ruta in enumerate(archivos, 1):
-        print(f"  {i}. {os.path.basename(ruta)}")
-    sel = input("\nNúmero de archivo o ruta a un .cuad: ").strip()
-    ruta = archivos[int(sel) - 1] if sel.isdigit() and 1 <= int(sel) <= len(archivos) else sel
-    if not os.path.exists(ruta):
-        print(f"{Colores.ROJO}Archivo no encontrado.{Colores.RESET}")
-        return
+def optimizar_cuadruplos(texto, titulo=None):
+    """Los cuádruplos ya son código intermedio: van directo al optimizador (sin léxico,
+    sintáctico, semántico ni generador)."""
     try:
-        res = optimizar_archivo_cuadruplos(ruta, PASES_ACTIVOS)
+        res = optimizar_texto_cuadruplos(texto, PASES_ACTIVOS, titulo)
     except Exception as e:
         print(f"{Colores.ROJO}Error al leer los cuádruplos: {e}{Colores.RESET}")
         return
@@ -251,45 +229,45 @@ def submenu_resultados(codigo, valido, err_lex, err_sint, rep_sem, tabla_rep, as
 def modo_terminal():
     while True:
         print(f"\n{Colores.AZUL}=== MODO TERMINAL (CLI) ==={Colores.RESET}")
-        print("1. Probar Expresiones de Prueba Obligatorias (Con declaraciones válidas)")
-        print("2. Cargar código desde archivo (.txt)")
+        print("1. Casos de prueba (código fuente y casos del optimizador)")
+        print("2. Cargar archivo (.txt código fuente / .cuad cuádruplos)")
         print("3. Ingresar expresión manualmente")
-        print("4. Optimizar un caso de prueba de cuádruplos (.cuad)")
-        print("5. Volver")
+        print("4. Volver")
 
         opc = input("Selecciona opción: ").strip()
         codigo = ""
 
         if opc == "1":
+            # PRUEBA_n / ERROR_n: código fuente (config.py) · OPT_n: cuádruplos (.cuad de /tests)
+            casos = [(f"{p['id']}: {p['descripcion']}", p['expresion'], False) for p in EXPRESIONES_PRUEBA_OBLIGATORIAS]
+            casos += casos_de_optimizacion()
             print("\nCasos de prueba disponibles:")
-            for idx, p in enumerate(EXPRESIONES_PRUEBA_OBLIGATORIAS, 1):
-                una_linea = p['expresion'].replace('\n', ' | ')   # (fuera del f-string: compatible con Python < 3.12)
-                print(f"  {idx}. {p['id']} ({p['descripcion']}):\n     {una_linea}")
+            for idx, (nombre, _, _) in enumerate(casos, 1):
+                print(f"  {idx:>2}. {nombre}")
 
-            sel = input(f"\nSelecciona número de prueba (1-{len(EXPRESIONES_PRUEBA_OBLIGATORIAS)}): ").strip()
-            if sel.isdigit() and 1 <= int(sel) <= len(EXPRESIONES_PRUEBA_OBLIGATORIAS):
-                codigo = EXPRESIONES_PRUEBA_OBLIGATORIAS[int(sel) - 1]['expresion']
-            else:
+            sel = input(f"\nSelecciona número de caso (1-{len(casos)}): ").strip()
+            if not (sel.isdigit() and 1 <= int(sel) <= len(casos)):
                 print(f"{Colores.ROJO}Selección inválida.{Colores.RESET}")
                 continue
+            nombre, texto, es_cuadruplos = casos[int(sel) - 1]
+            if es_cuadruplos:
+                optimizar_cuadruplos(texto, nombre.split(":")[0])
+                continue
+            codigo = texto
 
         elif opc == "2":
-            fuentes = _archivos_de_tests(".txt")
-            if fuentes:
-                print("\nProgramas de prueba en /tests:")
-                for i, r in enumerate(fuentes, 1):
-                    print(f"  {i}. {os.path.basename(r)}")
-            sel = input("Número de archivo o ruta del archivo (.txt): ").strip()
-            ruta = fuentes[int(sel) - 1] if sel.isdigit() and 1 <= int(sel) <= len(fuentes) else sel
-            if os.path.exists(ruta):
-                try:
-                    with open(ruta, 'r', encoding='utf-8') as f:
-                        codigo = f.read()
-                except Exception as e:
-                    print(f"{Colores.ROJO}Error al leer archivo: {e}{Colores.RESET}")
-                    continue
-            else:
+            ruta = input("Ruta del archivo (.txt o .cuad): ").strip()
+            if not os.path.exists(ruta):
                 print(f"{Colores.ROJO}Archivo no encontrado.{Colores.RESET}")
+                continue
+            try:
+                with open(ruta, 'r', encoding='utf-8') as f:
+                    codigo = f.read()
+            except Exception as e:
+                print(f"{Colores.ROJO}Error al leer archivo: {e}{Colores.RESET}")
+                continue
+            if ruta.lower().endswith(".cuad"):
+                optimizar_cuadruplos(codigo)
                 continue
 
         elif opc == "3":
@@ -303,9 +281,6 @@ def modo_terminal():
             codigo = "".join(lineas)
 
         elif opc == "4":
-            menu_archivo_cuadruplos()
-            continue
-        elif opc == "5":
             break
         else:
             print(f"{Colores.ROJO}Opción no válida.{Colores.RESET}")
