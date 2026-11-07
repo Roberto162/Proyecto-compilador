@@ -23,9 +23,8 @@ from modulos.codigo_intermedio import (
 
 # Módulo de optimización de código intermedio
 from modulos.optimizacion import (
-    PASES, NIVELES, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
+    PASES, NIVELES, optimizar_desde_ast, optimizar_texto_cuadruplos, reoptimizar, reporte
 )
-from modulos.optimizacion.bloques import exportar_dot
 
 ESPACIOS_POR_TAB = 4
 
@@ -176,17 +175,16 @@ class InterfazCompilador:
         lbl_pruebas = ttk.Label(frame_btn, text=" Casos de Prueba:", style="Panel.TLabel")
         lbl_pruebas.pack(side="left", padx=(15, 2))
 
-        # Casos obligatorios de config.py + programas fuente (.txt) de la carpeta /tests
-        self.casos_prueba = [(f"{p['id']}: {p['descripcion']}", p['expresion'])
+        # Casos de prueba: (nombre visible, texto, es_cuadruplos)
+        #   - PRUEBA_n / ERROR_n : código fuente definido en config.py
+        #   - OPT_n              : casos de optimización (.cuad de /tests), ya escritos en cuádruplos
+        self.casos_prueba = [(f"{p['id']}: {p['descripcion']}", p['expresion'], False)
                              for p in EXPRESIONES_PRUEBA_OBLIGATORIAS]
-        if os.path.isdir(DIRECTORIO_TESTS):
-            for nombre in sorted(os.listdir(DIRECTORIO_TESTS)):
-                if nombre.endswith(".txt"):
-                    with open(os.path.join(DIRECTORIO_TESTS, nombre), "r", encoding="utf-8") as f:
-                        self.casos_prueba.append((f"tests/{nombre}", f.read()))
+        self.casos_prueba += self._casos_de_optimizacion()
+        self.modo_cuadruplos = False      # True cuando el editor contiene cuádruplos en vez de código fuente
 
-        self.cb_pruebas = ttk.Combobox(frame_btn, state="readonly", width=42)
-        self.cb_pruebas['values'] = [nombre for nombre, _ in self.casos_prueba]
+        self.cb_pruebas = ttk.Combobox(frame_btn, state="readonly", width=48)
+        self.cb_pruebas['values'] = [nombre for nombre, _, _ in self.casos_prueba]
         self.cb_pruebas.pack(side="left", padx=2)
         self.cb_pruebas.bind("<<ComboboxSelected>>", self.cargar_prueba_seleccionada)
 
@@ -283,18 +281,9 @@ class InterfazCompilador:
         self._pases_visibles = False
         self._actualizar_boton_pases()
 
-        # Casos de prueba de optimización (archivos .cuad de la carpeta /tests)
-        ttk.Label(frame_acc, text="  Casos:", style="Panel.TLabel").pack(side="left")
-        self.casos_cuad = sorted(f for f in os.listdir(DIRECTORIO_TESTS) if f.endswith(".cuad")) \
-            if os.path.isdir(DIRECTORIO_TESTS) else []
-        self.cb_casos_opt = ttk.Combobox(frame_acc, state="readonly", width=30, values=self.casos_cuad)
-        self.cb_casos_opt.pack(side="left", padx=2)
-        self.cb_casos_opt.bind("<<ComboboxSelected>>", self.cargar_caso_optimizacion)
-
+        # Vuelve a optimizar el mismo código usando sólo los pases marcados en "⚙ Pases"
         ttk.Button(frame_acc, text="🔁 Re-optimizar", command=self.reoptimizar_actual).pack(side="left", padx=2)
-        ttk.Button(frame_acc, text="📄 Abrir otro .cuad", command=self.optimizar_archivo_cuad).pack(side="left", padx=2)
-        ttk.Button(frame_acc, text="💾 Exportar reporte", style="Secundario.TButton",
-                   command=self.exportar_reporte_opt).pack(side="left", padx=2)
+
 
         self.sub_notebook_opt = ttk.Notebook(self.tab_optimizacion)
         self.sub_notebook_opt.pack(fill="both", expand=True, padx=5, pady=5)
@@ -323,7 +312,6 @@ class InterfazCompilador:
 
         self.txt_opt_transf = self._sub_tab(self.sub_notebook_opt, " Transformaciones ")
         self.txt_opt_bloques = self._sub_tab(self.sub_notebook_opt, " Bloques Básicos / CFG ")
-        self.txt_opt_traza = self._sub_tab(self.sub_notebook_opt, " Traza de Pases ")
         self.txt_opt_metricas = self._sub_tab(self.sub_notebook_opt, " Métricas y Validación ")
 
     # =====================================================================
@@ -340,23 +328,31 @@ class InterfazCompilador:
 
     def cargar_archivo(self):
         ruta = filedialog.askopenfilename(
-            title="Seleccionar archivo de código fuente",
-            filetypes=[("Archivos de texto", "*.txt"), ("Todos los archivos", "*.*")]
+            title="Seleccionar archivo de código fuente o de cuádruplos",
+            filetypes=[("Código fuente o cuádruplos", "*.txt *.cuad"), ("Código fuente", "*.txt"),
+                       ("Cuádruplos", "*.cuad"), ("Todos los archivos", "*.*")]
         )
         if ruta:
             try:
                 with open(ruta, 'r', encoding='utf-8') as f:
                     self._poner_codigo(f.read())
-                self.lbl_estado.config(text=f"Estado: Archivo '{ruta}' cargado con éxito.")
+                self.modo_cuadruplos = ruta.lower().endswith(".cuad")
+                self.cb_pruebas.set("")
+                tipo = "cuádruplos (va directo al optimizador)" if self.modo_cuadruplos else "código fuente"
+                self.lbl_estado.config(text=f"Estado: Archivo '{ruta}' cargado como {tipo}.")
             except Exception as e:
                 messagebox.showerror("Error de Lectura", f"No se pudo leer el archivo:\n{e}")
 
     def cargar_prueba_seleccionada(self, event):
         idx = self.cb_pruebas.current()
         if idx >= 0:
-            nombre, codigo = self.casos_prueba[idx]
+            nombre, codigo, es_cuadruplos = self.casos_prueba[idx]
             self._poner_codigo(codigo)
-            self.lbl_estado.config(text=f"Estado: Cargado {nombre}")
+            self.modo_cuadruplos = es_cuadruplos
+            if es_cuadruplos:
+                self.procesar_codigo()          # los casos de optimización se muestran de inmediato
+            else:
+                self.lbl_estado.config(text=f"Estado: Cargado {nombre}")
 
     def _limpiar_resultados(self):
         for txt in (self.txt_lexico, self.txt_sintactico, self.txt_semantico, self.txt_polaca,
@@ -369,6 +365,7 @@ class InterfazCompilador:
         self._limpiar_resultados()
         self.cb_pruebas.set("")
         self.resultado_opt = None
+        self.modo_cuadruplos = False
         self.lbl_estado.config(text="Estado: Campos limpiados.")
 
     # =====================================================================
@@ -382,6 +379,10 @@ class InterfazCompilador:
 
         # Sólo se limpian los resultados: el código del editor no se toca
         self._limpiar_resultados()
+
+        if self.modo_cuadruplos:
+            self._procesar_cuadruplos(codigo)
+            return
 
         # 1. Léxico (errores y tabla de tokens)
         tokens_lex, err_lex = analizar_codigo(codigo)
@@ -451,7 +452,7 @@ class InterfazCompilador:
 
     def _limpiar_optimizacion(self, mensaje=""):
         for txt in (self.txt_opt_original, self.txt_opt_optimizado, self.txt_opt_transf,
-                    self.txt_opt_bloques, self.txt_opt_traza, self.txt_opt_metricas):
+                    self.txt_opt_bloques, self.txt_opt_metricas):
             txt.delete("1.0", tk.END)
             if mensaje:
                 txt.insert(tk.END, mensaje)
@@ -491,7 +492,6 @@ class InterfazCompilador:
         if res.esperado is not None:
             self.txt_opt_transf.insert(tk.END, "\n\n" + reporte.tabla_cuadruplos(res.esperado, "SALIDA ESPERADA DEL CASO"))
         self.txt_opt_bloques.insert(tk.END, reporte.bloques(res))
-        self.txt_opt_traza.insert(tk.END, reporte.traza(res))
         self.txt_opt_metricas.insert(tk.END, reporte.metricas(res))
 
         valido = "EQUIVALENTE ✅" if m.get("equivalente") else "NO EQUIVALENTE ❌"
@@ -499,51 +499,46 @@ class InterfazCompilador:
                                     f"{m['instr_despues']} instrucciones ({m['reduccion_pct']:.1f}%) · {valido}")
 
     def reoptimizar_actual(self):
+        """Vuelve a optimizar el MISMO código usando sólo los pases marcados en '⚙ Pases'.
+        Sirve para comparar el resultado con y sin un pase y ver qué aporta cada uno."""
         if self.resultado_opt is None:
-            messagebox.showinfo("Optimización", "Primero analiza un código fuente o carga un archivo .cuad.")
+            messagebox.showinfo("Optimización", "Primero analiza un caso de prueba o un código.")
             return
         self.mostrar_resultado_optimizacion(reoptimizar(self.resultado_opt, self._pases_seleccionados()))
 
-    def _mostrar_optimizacion_de_archivo(self, ruta):
+    def _casos_de_optimizacion(self):
+        """Lee los casos .cuad de /tests y los nombra OPT_n con el título de su primera línea."""
+        casos = []
+        if not os.path.isdir(DIRECTORIO_TESTS):
+            return casos
+        archivos = sorted(f for f in os.listdir(DIRECTORIO_TESTS) if f.endswith(".cuad"))
+        for n, nombre in enumerate(archivos, 1):
+            with open(os.path.join(DIRECTORIO_TESTS, nombre), "r", encoding="utf-8") as f:
+                texto = f.read()
+            primera = next((l.lstrip("# ").strip() for l in texto.splitlines() if l.startswith("#")), nombre)
+            titulo = primera.split(":", 1)[1].strip() if ":" in primera else primera
+            casos.append((f"OPT_{n}: {titulo} (cuádruplos)", texto, True))
+        return casos
+
+    def _procesar_cuadruplos(self, texto):
+        """Un caso de cuádruplos ya es código intermedio: no pasa por léxico, sintáctico,
+        semántico ni por el generador; se optimiza directamente."""
+        aviso = ("ℹ Este caso está escrito directamente en CUÁDRUPLOS (código intermedio).\n"
+                 "No pasa por el análisis léxico, sintáctico ni semántico, ni por el generador:\n"
+                 "va directo al optimizador. Revisa la pestaña '🛠 Optimización'.")
+        for txt in (self.txt_lexico, self.txt_sintactico, self.txt_semantico, self.txt_polaca,
+                    self.txt_codigo_p, self.txt_triplos, self.txt_cuadruplos):
+            txt.insert(tk.END, aviso)
         try:
-            res = optimizar_archivo_cuadruplos(ruta, self._pases_seleccionados())
+            res = optimizar_texto_cuadruplos(texto, self._pases_seleccionados())
         except Exception as e:
-            messagebox.showerror("Error en cuádruplos", f"No se pudo procesar el archivo:\n{e}")
+            self.resultado_opt = None
+            messagebox.showerror("Error en cuádruplos", f"No se pudo leer los cuádruplos:\n{e}")
+            self.lbl_estado.config(text="Estado: Error al leer los cuádruplos ❌")
             return
         self.mostrar_resultado_optimizacion(res)
         self.notebook.select(self.tab_optimizacion)
         self.sub_notebook_opt.select(0)
-
-    def cargar_caso_optimizacion(self, event=None):
-        """Optimiza el caso de prueba (.cuad) elegido en la lista."""
-        nombre = self.cb_casos_opt.get()
-        if nombre:
-            self._mostrar_optimizacion_de_archivo(os.path.join(DIRECTORIO_TESTS, nombre))
-
-    def optimizar_archivo_cuad(self):
-        ruta = filedialog.askopenfilename(
-            title="Seleccionar archivo de cuádruplos",
-            initialdir=DIRECTORIO_TESTS if os.path.isdir(DIRECTORIO_TESTS) else None,
-            filetypes=[("Cuádruplos", "*.cuad"), ("Todos los archivos", "*.*")]
-        )
-        if ruta:
-            self._mostrar_optimizacion_de_archivo(ruta)
-
-    def exportar_reporte_opt(self):
-        if self.resultado_opt is None:
-            messagebox.showinfo("Exportar", "No hay resultados de optimización para exportar.")
-            return
-        ruta = filedialog.asksaveasfilename(defaultextension=".txt", initialfile="reporte_optimizacion.txt",
-                                            filetypes=[("Texto", "*.txt")])
-        if not ruta:
-            return
-        with open(ruta, "w", encoding="utf-8") as f:
-            f.write(reporte.reporte_completo(self.resultado_opt))
-        with open(ruta.rsplit(".", 1)[0] + "_cfg.dot", "w", encoding="utf-8") as f:
-            f.write(exportar_dot(self.resultado_opt.original, "CFG_original") + "\n\n" +
-                    exportar_dot(self.resultado_opt.optimizado, "CFG_optimizado"))
-        self.lbl_estado.config(text=f"Estado: Reporte exportado en '{ruta}' (y el CFG en .dot).")
-
 
 def ejecutar_interfaz_grafica():
     root = tk.Tk()
