@@ -1,199 +1,286 @@
 """
 modulos/codigo_intermedio.py
 ============================
-Generador de Código Intermedio Puro a partir del AST.
-Módulo desacoplado sin tipos de datos ni verificaciones semánticas.
+Generador de Código Intermedio a partir del AST.
+Sólo traduce: no calcula valores, no verifica tipos y no optimiza.
 
-Produce exclusivamente:
-1. Notación Polaca (Prefija)
-2. Código P (Máquina de Pila)
-3. Triplos Indexados (op, arg1, arg2)
-4. Cuádruplos (op, arg1, arg2, resultado)
+Produce cuatro representaciones del programa completo, incluyendo control de flujo:
+1. Notación Polaca (Prefija)          - recorrido en preorden
+2. Código P (Máquina de Pila)         - recorrido en posorden (PUSH / operación / STORE, FJP / UJP / LAB)
+3. Triplos Indexados (op, arg1, arg2) - los resultados se referencian por índice (n) y los saltos a [n]
+4. Cuádruplos (op, arg1, arg2, res)   - temporales t1, t2... y etiquetas L1, L2...
+
+Traducción de las estructuras de control (cuádruplos):
+
+    si c: A  sino: B              mientras c: A
+    ----------------              -------------
+    tC = c                        label L1
+    ifFalse tC _ L2               tC = c
+    A                             ifFalse tC _ L2
+    goto _ _ L1                   A
+    label L2                      goto _ _ L1
+    B                             label L2
+    label L1
+
+Una declaración sin valor inicial ('complete x') sólo reserva la variable (tabla de
+símbolos) y no genera instrucciones.
 """
 
-
-from config import OPCODES_CODIGO_P, PREFIJO_TEMPORALES
+from config import OPCODES_CODIGO_P, PREFIJO_TEMPORALES, PREFIJO_ETIQUETAS
 from modulos.sintactico import NodoAST
+
+OPERADORES = ('OPERADOR_ARIT', 'OPERADOR_REL')
 
 
 class GeneradorCodigoIntermedio:
     #Es la clase principal del módulo. Recibe el AST del analizador sintáctico y
-    #lo utiliza para generar cuatro representaciones del código intermedio: 
+    #lo utiliza para generar cuatro representaciones del código intermedio:
     # notación polaca, código P, triplos y cuádruplos.
     def __init__(self, ast_raiz: NodoAST):
-        #Inicializa el generador y guarda la raíz del árbol sintáctico en self.raiz. 
-        # A partir de ella, las demás funciones recorren el AST para producir el código intermedio.
+        #Guarda la raíz del árbol sintáctico. A partir de ella, las demás funciones
+        # recorren el AST para producir el código intermedio.
         self.raiz = ast_raiz
 
     def _obtener_sentencias(self, nodo):
-        """Descompone el AST en una lista plana de sentencias."""
+        """Descompone un BLOQUE del AST en una lista plana de sentencias."""
         if not nodo:
             return []
-        if nodo.tipo_nodo in ['BLOQUE', 'RAMAS_SI_SINO']:
+        if nodo.tipo_nodo == 'BLOQUE':
             return self._obtener_sentencias(nodo.izq) + self._obtener_sentencias(nodo.der)
         return [nodo]
+
+    @staticmethod
+    def _ramas(nodo_si):
+        """Devuelve (cuerpo_si, cuerpo_sino) de un nodo CONDICIONAL."""
+        ramas = nodo_si.der
+        return (ramas.izq, ramas.der) if ramas else (None, None)
 
     # =========================================================================
     # 1. NOTACIÓN POLACA (PREFIJA)
     # =========================================================================
     def generar_polaca(self) -> str:
-        #Genera la notación polaca o prefija mediante un recorrido en preorden del árbol.
-        """Recorrido Preorden del árbol sintáctico."""
-        #recorre cada nodo comenzando por el operador y después sus operandos.
-        sentencias = self._obtener_sentencias(self.raiz)
+        """Recorrido en preorden: primero el operador y después sus operandos.
+        Las estructuras de control se muestran con sangría y su cierre (FIN_SI / FIN_MIENTRAS)."""
         lineas = []
 
-        for st in sentencias:
-            tokens = []
-            def _preorden(n):
-                if not n: return
-                if n.tipo_nodo in ['DECLARACION', 'ASIGNACION']:
-                    tokens.append("=")
-                    if n.izq:
-                        tokens.append(str(n.izq.valor))
-                    _preorden(n.der)
-                elif n.tipo_nodo in ['OPERADOR_ARIT', 'OPERADOR_REL']:
-                    tokens.append(str(n.valor))
-                    _preorden(n.izq)
-                    _preorden(n.der)
-                else:  # ID o LITERAL
-                    tokens.append(str(n.valor))
+        def expr(n):
+            if n is None:
+                return []
+            if n.tipo_nodo in OPERADORES:
+                return [str(n.valor)] + expr(n.izq) + expr(n.der)
+            return [str(n.valor)]          # ID o LITERAL
 
-            _preorden(st)
-            if tokens:
-                lineas.append(" ".join(tokens))
+        def bloque(nodo, nivel):
+            sangria = "    " * nivel
+            for st in self._obtener_sentencias(nodo):
+                t = st.tipo_nodo
+                if t in ('DECLARACION', 'ASIGNACION'):
+                    if st.der is not None:
+                        lineas.append(sangria + " ".join(["=", str(st.izq.valor)] + expr(st.der)))
+                elif t == 'CONDICIONAL':
+                    cuerpo_si, cuerpo_sino = self._ramas(st)
+                    lineas.append(sangria + "SI " + " ".join(expr(st.izq)))
+                    bloque(cuerpo_si, nivel + 1)
+                    if cuerpo_sino is not None:
+                        lineas.append(sangria + "SINO")
+                        bloque(cuerpo_sino, nivel + 1)
+                    lineas.append(sangria + "FIN_SI")
+                elif t == 'CICLO':
+                    lineas.append(sangria + "MIENTRAS " + " ".join(expr(st.izq)))
+                    bloque(st.der, nivel + 1)
+                    lineas.append(sangria + "FIN_MIENTRAS")
+                elif t == 'IMPRESION':
+                    lineas.append(sangria + " ".join(["mostrar"] + expr(st.izq)))
+                elif t == 'OP_ESPECIAL':
+                    lineas.append(sangria + f"reverse {st.izq.valor}")
+                else:                                  # expresión usada como sentencia
+                    lineas.append(sangria + " ".join(expr(st)))
 
+        bloque(self.raiz, 0)
         return "\n".join(lineas) if lineas else "N/A"
 
     # =========================================================================
     # 2. CÓDIGO P (MÁQUINA DE PILA)
     # =========================================================================
     def generar_codigo_p(self) -> list:
-        #Genera instrucciones para una máquina de pila mediante un recorrido en posorden.
-        """Recorrido Posorden para máquina de pila (PUSH, ADD, MUL, STORE)."""
-        sentencias = self._obtener_sentencias(self.raiz)
+        """Recorrido en posorden para una máquina de pila.
+        PUSH coloca un valor, las operaciones toman los dos valores de la cima,
+        STORE guarda la cima en una variable, FJP salta si la cima es falsa,
+        UJP salta siempre y LAB marca el destino de un salto."""
         instrucciones = []
+        contador = [0]
 
-        for st in sentencias:
-            def _postorden(n):
-                #primero procesa los operandos y después el operador. 
-                # Para identificadores y literales genera instrucciones PUSH, que colocan valores en la pila.
-                if not n: return
-                if n.tipo_nodo in ['DECLARACION', 'ASIGNACION']:
-                    _postorden(n.der)
-                    var_target = n.izq.valor if n.izq else ""
-                    instrucciones.append(f"STORE {var_target}")
-                elif n.tipo_nodo in ['OPERADOR_ARIT', 'OPERADOR_REL']:
-                    _postorden(n.izq)
-                    _postorden(n.der)
-                    opcode = OPCODES_CODIGO_P.get(n.valor, str(n.valor).upper())
-                    instrucciones.append(opcode)
-                elif n.tipo_nodo in ['ID', 'LITERAL']:
-                    instrucciones.append(f"PUSH {n.valor}")
+        def etiqueta():
+            contador[0] += 1
+            return f"{PREFIJO_ETIQUETAS}{contador[0]}"
 
-            _postorden(st)
+        def expr(n):
+            if n is None:
+                return
+            if n.tipo_nodo in OPERADORES:
+                expr(n.izq)
+                expr(n.der)
+                instrucciones.append(OPCODES_CODIGO_P.get(n.valor, str(n.valor).upper()))
+            else:
+                instrucciones.append(f"PUSH {n.valor}")
 
+        def bloque(nodo):
+            for st in self._obtener_sentencias(nodo):
+                t = st.tipo_nodo
+                if t in ('DECLARACION', 'ASIGNACION'):
+                    if st.der is not None:
+                        expr(st.der)
+                        instrucciones.append(f"{OPCODES_CODIGO_P['=']} {st.izq.valor}")
+                elif t == 'CONDICIONAL':
+                    cuerpo_si, cuerpo_sino = self._ramas(st)
+                    l_fin = etiqueta()
+                    expr(st.izq)
+                    if cuerpo_sino is not None:
+                        l_sino = etiqueta()
+                        instrucciones.append(f"{OPCODES_CODIGO_P['ifFalse']} {l_sino}")
+                        bloque(cuerpo_si)
+                        instrucciones.append(f"{OPCODES_CODIGO_P['goto']} {l_fin}")
+                        instrucciones.append(f"{OPCODES_CODIGO_P['label']} {l_sino}")
+                        bloque(cuerpo_sino)
+                    else:
+                        instrucciones.append(f"{OPCODES_CODIGO_P['ifFalse']} {l_fin}")
+                        bloque(cuerpo_si)
+                    instrucciones.append(f"{OPCODES_CODIGO_P['label']} {l_fin}")
+                elif t == 'CICLO':
+                    l_ini, l_fin = etiqueta(), etiqueta()
+                    instrucciones.append(f"{OPCODES_CODIGO_P['label']} {l_ini}")
+                    expr(st.izq)
+                    instrucciones.append(f"{OPCODES_CODIGO_P['ifFalse']} {l_fin}")
+                    bloque(st.der)
+                    instrucciones.append(f"{OPCODES_CODIGO_P['goto']} {l_ini}")
+                    instrucciones.append(f"{OPCODES_CODIGO_P['label']} {l_fin}")
+                elif t == 'IMPRESION':
+                    expr(st.izq)
+                    instrucciones.append(OPCODES_CODIGO_P['print'])
+                elif t == 'OP_ESPECIAL':
+                    var = st.izq.valor
+                    instrucciones.extend([f"PUSH {var}", OPCODES_CODIGO_P["reverse"], f"{OPCODES_CODIGO_P['=']} {var}"])
+                else:                                   # expresión suelta: se descarta su valor
+                    expr(st)
+                    instrucciones.append(OPCODES_CODIGO_P['pop'])
+
+        bloque(self.raiz)
         return instrucciones
-
-    # =========================================================================
-    # 3. TRIPLOS INDEXADOS (op, arg1, arg2)
-    # =========================================================================
-    #Genera la representación de triplos, donde cada operación tiene un índice y los
-    #  resultados de operaciones anteriores pueden referenciarse mediante ese índice.
-    def generar_triplos(self) -> list:
-        """Genera la representación en triplos usando referencias posicionales (0), (1)..."""
-        sentencias = self._obtener_sentencias(self.raiz)
-        triplos = []
-
-        for st in sentencias:
-            def _procesar(n):
-                if not n: return ""
-                if n.tipo_nodo in ['ID', 'LITERAL']:
-                    return str(n.valor)
-
-                if n.tipo_nodo in ['DECLARACION', 'ASIGNACION']:
-                    res_expr = _procesar(n.der)
-                    var_target = str(n.izq.valor) if n.izq else ""
-                    idx = f"({len(triplos)})"
-                    triplos.append({
-                        "indice": idx,
-                        "operador": "=",
-                        "arg1": var_target,
-                        "arg2": res_expr
-                    })
-                    return idx
-
-                if n.tipo_nodo in ['OPERADOR_ARIT', 'OPERADOR_REL']:
-                    arg1 = _procesar(n.izq)
-                    arg2 = _procesar(n.der)
-                    idx = f"({len(triplos)})"
-                    triplos.append({
-                        "indice": idx,
-                        "operador": str(n.valor),
-                        "arg1": arg1,
-                        "arg2": arg2
-                    })
-                    return idx
-
-                return ""
-
-            _procesar(st)
-
-        return triplos
 
     # =========================================================================
     # 4. CUÁDRUPLOS (op, arg1, arg2, resultado)
     # =========================================================================
     def generar_cuadruplos(self) -> list:
-        #Genera cuádruplos utilizando variables temporales para almacenar los resultados de las operaciones.
-        """Genera código de tres direcciones con variables temporales (t1, t2...)."""
-        sentencias = self._obtener_sentencias(self.raiz)
+        """Código de tres direcciones con temporales (t1, t2...) y etiquetas (L1, L2...)."""
         cuadruplos = []
-        contador_temp = 1
+        cont = {"temp": 0, "etiq": 0}
 
-        for st in sentencias:
-            def _procesar(n):
-                #procesa los operandos antes de generar cada operación. Si encuentra un identificador 
-                # o literal, devuelve su valor. Si encuentra una operación aritmética o relacional, 
-                # crea una variable temporal, como t1 o t2, y guarda la operación junto con sus 
-                # argumentos y resultado. Si encuentra una declaración o asignación, genera un 
-                # cuádruplo para guardar el resultado en la variable destino.
-                nonlocal contador_temp
-                #permite que la función interna modifique el contador de temporales definido 
-                # en generar_cuadruplos, para que cada temporal tenga un número consecutivo.
-                if not n: return ""
-                if n.tipo_nodo in ['ID', 'LITERAL']:
-                    return str(n.valor)
+        def temporal():
+            cont["temp"] += 1
+            return f"{PREFIJO_TEMPORALES}{cont['temp']}"
 
-                if n.tipo_nodo in ['DECLARACION', 'ASIGNACION']:
-                    res_expr = _procesar(n.der)
-                    var_target = str(n.izq.valor) if n.izq else ""
-                    cuadruplos.append({
-                        "operador": "=",
-                        "arg1": res_expr,
-                        "arg2": "",
-                        "resultado": var_target
-                    })
-                    return var_target
+        def etiqueta():
+            cont["etiq"] += 1
+            return f"{PREFIJO_ETIQUETAS}{cont['etiq']}"
 
-                if n.tipo_nodo in ['OPERADOR_ARIT', 'OPERADOR_REL']:
-                    arg1 = _procesar(n.izq)
-                    arg2 = _procesar(n.der)
-                    temp_var = f"{PREFIJO_TEMPORALES}{contador_temp}"
-                    contador_temp += 1
-                    cuadruplos.append({
-                        "operador": str(n.valor),
-                        "arg1": arg1,
-                        "arg2": arg2,
-                        "resultado": temp_var
-                    })
-                    return temp_var
+        def emitir(op, a1="", a2="", res=""):
+            cuadruplos.append({"operador": op, "arg1": str(a1), "arg2": str(a2), "resultado": str(res)})
 
+        def expr(n):
+            # Devuelve el operando (variable, literal o temporal) que contiene el valor de la expresión
+            if n is None:
                 return ""
+            if n.tipo_nodo in OPERADORES:
+                a = expr(n.izq)
+                b = expr(n.der)
+                t = temporal()
+                emitir(str(n.valor), a, b, t)
+                return t
+            return str(n.valor)
 
-            _procesar(st)
+        def bloque(nodo):
+            for st in self._obtener_sentencias(nodo):
+                t = st.tipo_nodo
+                if t in ('DECLARACION', 'ASIGNACION'):
+                    if st.der is not None:
+                        emitir("=", expr(st.der), "", st.izq.valor)
+                elif t == 'CONDICIONAL':
+                    cuerpo_si, cuerpo_sino = self._ramas(st)
+                    c = expr(st.izq)
+                    l_fin = etiqueta()
+                    if cuerpo_sino is not None:
+                        l_sino = etiqueta()
+                        emitir("ifFalse", c, "", l_sino)
+                        bloque(cuerpo_si)
+                        emitir("goto", "", "", l_fin)
+                        emitir("label", "", "", l_sino)
+                        bloque(cuerpo_sino)
+                    else:
+                        emitir("ifFalse", c, "", l_fin)
+                        bloque(cuerpo_si)
+                    emitir("label", "", "", l_fin)
+                elif t == 'CICLO':
+                    l_ini, l_fin = etiqueta(), etiqueta()
+                    emitir("label", "", "", l_ini)
+                    c = expr(st.izq)
+                    emitir("ifFalse", c, "", l_fin)
+                    bloque(st.der)
+                    emitir("goto", "", "", l_ini)
+                    emitir("label", "", "", l_fin)
+                elif t == 'IMPRESION':
+                    emitir("print", expr(st.izq))
+                elif t == 'OP_ESPECIAL':
+                    var = st.izq.valor
+                    emitir("reverse", var, "", var)
+                else:                                   # expresión suelta
+                    expr(st)
 
+        bloque(self.raiz)
         return cuadruplos
+
+    # =========================================================================
+    # 3. TRIPLOS INDEXADOS (op, arg1, arg2)
+    # =========================================================================
+    def generar_triplos(self) -> list:
+        """Triplos obtenidos de los cuádruplos: cada temporal se sustituye por el índice (n)
+        del triplo que lo calcula, y cada etiqueta por el índice [n] de la instrucción destino."""
+        cuadruplos = self.generar_cuadruplos()
+        triplos = []
+        ref_temporal = {}          # t3 -> "(5)"
+        destino_etiqueta = {}      # L1 -> índice del triplo siguiente a la etiqueta
+        pendientes = []            # (índice del triplo, campo, etiqueta) para resolver al final
+
+        def ref(x):
+            return ref_temporal.get(x, x)
+
+        def agregar(op, a1, a2):
+            triplos.append({"indice": f"({len(triplos)})", "operador": op, "arg1": a1, "arg2": a2})
+            return len(triplos) - 1
+
+        for c in cuadruplos:
+            op, a1, a2, res = c["operador"], c["arg1"], c["arg2"], c["resultado"]
+            if op == "label":
+                destino_etiqueta[res] = len(triplos)
+            elif op == "=":
+                agregar("=", res, ref(a1))
+            elif op == "ifFalse":
+                k = agregar("ifFalse", ref(a1), "")
+                pendientes.append((k, "arg2", res))
+            elif op == "goto":
+                k = agregar("goto", "", "")
+                pendientes.append((k, "arg1", res))
+            elif op == "print":
+                agregar("print", ref(a1), "")
+            elif op == "reverse":
+                k = agregar("reverse", a1, "")
+                agregar("=", res, f"({k})")
+            else:                                   # operador aritmético o relacional
+                k = agregar(op, ref(a1), ref(a2))
+                ref_temporal[res] = f"({k})"
+
+        for k, campo, etiq in pendientes:
+            triplos[k][campo] = f"[{destino_etiqueta[etiq]}]"
+        return triplos
 
 
 # =============================================================================
@@ -208,8 +295,8 @@ def obtener_polaca_str(ast_raiz: NodoAST) -> str:
 def obtener_codigo_p_str(ast_raiz: NodoAST) -> str:
     gen = GeneradorCodigoIntermedio(ast_raiz)
     salida = ["--- 2. CÓDIGO P (MÁQUINA DE PILA) ---\n"]
-    for inst in gen.generar_codigo_p():
-        salida.append(f"  {inst}")
+    for i, inst in enumerate(gen.generar_codigo_p()):
+        salida.append(f"  {i:>3}  {inst}")
     return "\n".join(salida)
 
 
@@ -220,16 +307,17 @@ def obtener_triplos_str(ast_raiz: NodoAST) -> str:
     salida.append("-" * 62)
     for t in gen.generar_triplos():
         salida.append(f"{t['indice']:<10}{t['operador']:<12}{t['arg1']:<20}{t['arg2']:<20}")
+    salida.append("\n(n) = resultado del triplo n · [n] = salto al triplo n")
     return "\n".join(salida)
 
 
 def obtener_cuadruplos_str(ast_raiz: NodoAST) -> str:
     gen = GeneradorCodigoIntermedio(ast_raiz)
     salida = ["--- 4. CUÁDRUPLOS ---\n"]
-    salida.append(f"{'OPERADOR':<12}{'ARGUMENTO 1':<20}{'ARGUMENTO 2':<20}{'RESULTADO':<12}")
-    salida.append("-" * 64)
-    for c in gen.generar_cuadruplos():
-        salida.append(f"{c['operador']:<12}{c['arg1']:<20}{c['arg2']:<20}{c['resultado']:<12}")
+    salida.append(f"{'#':>3}  {'OPERADOR':<12}{'ARGUMENTO 1':<20}{'ARGUMENTO 2':<20}{'RESULTADO':<12}")
+    salida.append("-" * 69)
+    for i, c in enumerate(gen.generar_cuadruplos(), 1):
+        salida.append(f"{i:>3}  {c['operador']:<12}{c['arg1'] or '_':<20}{c['arg2'] or '_':<20}{c['resultado'] or '_':<12}")
     return "\n".join(salida)
 
 

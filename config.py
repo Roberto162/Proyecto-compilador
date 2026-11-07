@@ -97,11 +97,32 @@ OPCODES_CODIGO_P = {
     '>': 'GT',
     '<=': 'LE',
     '>=': 'GE',
-    '=': 'STORE'
+    '=': 'STORE',
+    # Control de flujo y operaciones especiales (notación clásica de Código P)
+    'ifFalse': 'FJP',     # salta si la cima de la pila es falsa
+    'goto': 'UJP',        # salto incondicional
+    'label': 'LAB',       # destino de un salto
+    'print': 'WRI',       # mostrar(): escribe la cima de la pila
+    'reverse': 'REV',     # invierte la cadena de la cima
+    'pop': 'POP'          # descarta la cima (expresión usada como sentencia)
 }
 
 # Prefijo predeterminado para variables temporales en Cuádruplos (t1, t2, t3...)
 PREFIJO_TEMPORALES = "t"
+
+# [OPTIMIZACIÓN] Prefijo de las etiquetas generadas para saltos (L1, L2, ...)
+PREFIJO_ETIQUETAS = "L"
+
+# =====================================================================
+# 4.1 [OPTIMIZACIÓN] PARÁMETROS DEL MOTOR DE OPTIMIZACIÓN
+# =====================================================================
+OPT_MAX_RONDAS = 10                # rondas máximas del pipeline hasta llegar a punto fijo
+OPT_PRUEBAS_VALIDACION = 5         # juegos de entradas aleatorias para el validador
+OPT_SEMILLA_VALIDACION = 2026      # semilla fija -> resultados reproducibles
+OPT_RANGO_ENTRADAS = (1, 20)       # rango de valores para variables de entrada
+OPT_MAX_PASOS_EJECUCION = 100000   # protección contra ciclos infinitos en el intérprete
+import os as _os
+DIRECTORIO_TESTS = _os.path.join(_os.path.dirname(_os.path.abspath(__file__)), "tests")  # pruebas .cuad / .txt
 
 # =====================================================================
 # 5. CASOS DE PRUEBA 
