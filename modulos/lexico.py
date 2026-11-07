@@ -12,11 +12,22 @@ Responsabilidades:
 import re
 from config import KEYWORDS, TOKEN_REGEX, Colores
 
+# Los patrones se compilan UNA sola vez (antes se compilaban en cada carácter del código)
+PATRONES = [(tipo, re.compile(regex)) for tipo, regex in TOKEN_REGEX]
+
+# Continuación inválida pegada a un número: "2abc", "3.5x", "3."
+_RE_NUMERO_MAL_FORMADO = re.compile(r"[A-Za-z_0-9.]*")
+
+
+def _error(errores, linea, columna, mensaje):
+    # Formato fijo "Error léxico en línea N, columna M": el semántico lo usa para omitir líneas con error
+    errores.append(f"Error léxico en línea {linea}, columna {columna}: {mensaje}")
+
 
 def analizar_codigo(codigo: str):
     """
     Realiza el análisis léxico del código fuente.
-    
+
     Retorna:
         tuple: (tokens, errores_lexicos)
             - tokens (list): Lista de diccionarios con la estructura
@@ -31,15 +42,47 @@ def analizar_codigo(codigo: str):
     longitud = len(codigo)
 
     while i < longitud:
-        match = None
+        car = codigo[i]
 
+        # Retorno de carro (archivos con saltos de línea de Windows \r\n): se ignora como espacio
+        if car == "\r":
+            i += 1
+            continue
+
+        # Cadenas: deben cerrarse en la MISMA línea; si no, es un error léxico
+        if car == '"':
+            fin_linea = codigo.find("\n", i)
+            fin_linea = longitud if fin_linea == -1 else fin_linea
+            cierre = codigo.find('"', i + 1, fin_linea)
+            if cierre == -1:
+                fragmento = codigo[i:fin_linea].rstrip("\r")
+                _error(errores_lexicos, linea, columna, f"Cadena sin cerrar {fragmento}")
+                columna += fin_linea - i
+                i = fin_linea
+                continue
+            lexema = codigo[i:cierre + 1]
+            tokens.append({"tipo": "CADENA", "lexema": lexema, "linea": linea, "columna": columna})
+            columna += len(lexema)
+            i = cierre + 1
+            continue
+
+        match = None
         # Probar cada patrón de Expresión Regular en orden de prioridad
-        for tipo, regex in TOKEN_REGEX:
-            patron = re.compile(regex)
+        for tipo, patron in PATRONES:
             match = patron.match(codigo, i)
 
             if match:
                 lexema = match.group(0)
+
+                # Números con letras o un punto pegados (2abc, 3.) -> error léxico
+                if tipo in ("NUM_ENTERO", "NUM_DECIMAL"):
+                    resto = _RE_NUMERO_MAL_FORMADO.match(codigo, match.end(0)).group(0)
+                    if resto:
+                        mal = lexema + resto
+                        _error(errores_lexicos, linea, columna, f"Número mal formado '{mal}'")
+                        columna += len(mal)
+                        i = match.end(0) + len(resto)
+                        break
 
                 # Descartar espacios en blanco y comentarios para las fases posteriores
                 if tipo not in ["ESPACIO", "COMENTARIO"]:
@@ -68,10 +111,7 @@ def analizar_codigo(codigo: str):
 
         # Manejo de Error Léxico (Símbolo no admitido / carácter no reconocido)
         if not match:
-            char_invalido = codigo[i]
-            errores_lexicos.append(
-                f"Error léxico en línea {linea}, columna {columna}: Carácter no reconocido '{char_invalido}'"
-            )
+            _error(errores_lexicos, linea, columna, f"Carácter no reconocido '{car}'")
             i += 1
             columna += 1
 
