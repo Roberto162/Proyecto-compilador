@@ -1,0 +1,10 @@
+# Prueba en lenguaje fuente: expresiones aritméticas intensivas
+# salida: resultado, area
+complete a = 10
+complete b = 20
+complete c = 5
+complete uno = 1
+complete cero = 0
+complete resultado = (a + b) * c - (a + b) * uno + c * cero
+complete area = resultado * 2 + 4 * 1024
+mostrar(area)

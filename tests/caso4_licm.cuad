@@ -1,0 +1,29 @@
+# Caso 4: Movimiento de código invariante de ciclos (LICM)
+#   i = 0; while (i < limite) { val = (ancho * escala) + i; i = i + 1; }
+@salida i, val
+@entrada limite=10, ancho=4, escala=3
+
+=        0       _       i
+label    _       _       L_LOOP
+<        i       limite  t1
+ifFalse  t1      _       L_END
+*        ancho   escala  t2
++        t2      i       t3
+=        t3      _       val
++        i       1       t4
+=        t4      _       i
+goto     _       _       L_LOOP
+label    _       _       L_END
+
+@esperado
+=        0       _       i
+*        ancho   escala  t2
+label    _       _       L_LOOP
+<        i       limite  t1
+ifFalse  t1      _       L_END
++        t2      i       t3
+=        t3      _       val
++        i       1       t4
+=        t4      _       i
+goto     _       _       L_LOOP
+label    _       _       L_END

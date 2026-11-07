@@ -1,0 +1,17 @@
+# Prueba en lenguaje fuente: ciclos anidados con condicional
+# (el invariante i * k se mueve fuera del ciclo interno)
+# salida: s, i
+complete i = 0
+complete n = 4
+complete m = 3
+complete k = 5
+complete j = 0
+complete s = 0
+mientras i < n:
+    i = i + 1
+    j = 0
+    mientras j < m:
+        j = j + 1
+        s = s + i * k
+        si s > 50:
+            s = s - 50

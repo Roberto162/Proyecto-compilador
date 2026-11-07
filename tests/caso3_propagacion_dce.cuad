@@ -1,0 +1,18 @@
+# Caso 3: Propagación de copias/constantes y eliminación de código muerto (condicional con código muerto)
+@salida salida
+
+=        10       _    debug
+=        5        _    factor
+*        factor   2    t1
+==       debug    0    t2
+ifFalse  t2       _    L1
+*        base     100  costo
+goto     _        _    L2
+label    _        _    L1
+*        base     t1   costo
+label    _        _    L2
+=        costo    _    salida
+
+@esperado
+*   base   10   costo
+=   costo  _    salida

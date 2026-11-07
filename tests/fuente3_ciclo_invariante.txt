@@ -1,0 +1,10 @@
+# Prueba en lenguaje fuente: ciclo con cálculo invariante
+# salida: i, acum
+complete i = 0
+complete limite = 10
+complete ancho = 4
+complete escala = 3
+complete acum = 0
+mientras i < limite:
+    acum = acum + ancho * escala + i
+    i = i + 1

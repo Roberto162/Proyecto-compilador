@@ -1,0 +1,47 @@
+# Caso 5: Ciclos anidados con condicional, invariantes, CSE, código muerto y saltos redundantes
+#   s = 0; i = 0;
+#   while (i < n) {
+#       j = 0;
+#       while (j < m) {
+#           k = base * 4;             // invariante de ambos ciclos
+#           p = i * k;                // invariante del ciclo interno
+#           if (p > 0) s = s + p * 1; // x * 1 -> x
+#           else { tmp = 99; }        // código muerto (tmp nunca se lee)
+#           j = j + 1;
+#       }
+#       i = i + 1;
+#   }
+@salida s, i
+@entrada n=4, m=3, base=2
+
+=        0      _      s
+=        0      _      i
+label    _      _      L1
+<        i      n      t1
+ifFalse  t1     _      L2
+=        0      _      j
+label    _      _      L3
+<        j      m      t2
+ifFalse  t2     _      L4
+*        base   4      t3
+=        t3     _      k
+*        i      k      t4
+=        t4     _      p
+>        p      0      t5
+ifFalse  t5     _      L5
+*        p      1      t6
++        s      t6     t7
+=        t7     _      s
+goto     _      _      L6
+label    _      _      L5
+=        99     _      tmp
+goto     _      _      L6
+label    _      _      L6
++        j      1      t8
+=        t8     _      j
+goto     _      _      L3
+label    _      _      L4
++        i      1      t9
+=        t9     _      i
+goto     _      _      L1
+label    _      _      L2

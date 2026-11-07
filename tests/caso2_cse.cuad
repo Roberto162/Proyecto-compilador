@@ -1,0 +1,21 @@
+# Caso 2: Eliminación de subexpresiones comunes locales (CSE)
+@salida x, y, z
+
++   a    b    t1
+=   t1   _    x
+*   c    d    t2
++   a    b    t3
++   t2   t3   t4
+=   t4   _    y
+*   c    d    t5
+*   x    t5   t6
+=   t6   _    z
+
+@esperado
++   a    b    t1
+=   t1   _    x
+*   c    d    t2
++   t2   t1   t4
+=   t4   _    y
+*   x    t2   t6
+=   t6   _    z

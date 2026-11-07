@@ -1,0 +1,10 @@
+# Prueba en lenguaje fuente: condicional con código muerto (la condición siempre es falsa)
+# salida: costo
+complete debug = 0
+complete base = 7
+complete factor = 5
+complete costo = 0
+si debug == 1:
+    costo = base * 100
+sino:
+    costo = base * factor * 2

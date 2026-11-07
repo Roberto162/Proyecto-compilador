@@ -1,0 +1,16 @@
+# Caso 1: Plegado de constantes y simplificación algebraica (Nivel local)
+# Un solo bloque básico. Expresiones aritméticas intensivas.
+@salida res
+
+*   4    10   t1
++   t1   2    t2
+*   x    1    t3
++   y    0    t4
+*   z    0    t5
++   t3   t4   t6
++   t6   t5   t7
+=   t7   _    res
+
+@esperado
++   x    y    t6
+=   t6   _    res
