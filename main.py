@@ -7,7 +7,7 @@ Punto de entrada principal del compilador con submenú interactivo para Código 
 import os
 import sys
 
-from config import Colores, EXPRESIONES_PRUEBA_OBLIGATORIAS
+from config import Colores, EXPRESIONES_PRUEBA_OBLIGATORIAS, DIRECTORIO_TESTS
 from modulos.semantico import ejecutar_pipeline_completo
 from modulos.codigo_intermedio import (
     obtener_polaca_str,
@@ -21,10 +21,9 @@ from modulos.sintactico import preparar_tokens, AnalizadorSintactico
 
 # Módulo de optimización de código intermedio
 from modulos.optimizacion import (
-    PASES, PASES_POR_DEFECTO, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
+    PASES, PASES_POR_DEFECTO, NIVELES, DESCRIPCION_PASES, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
 )
 from modulos.optimizacion.bloques import exportar_dot
-from modulos.optimizacion.suite import ejecutar_suite, listar_tests
 
 # Pases activos (se pueden activar/desactivar desde el submenú)
 PASES_ACTIVOS = list(PASES_POR_DEFECTO)
@@ -57,8 +56,8 @@ def submenu_codigo_intermedio(ast_raiz):
             break
         else:
             print(f"{Colores.ROJO}Opción inválida.{Colores.RESET}")
-
-        input(f"\n{Colores.AZUL}Presiona ENTER para continuar...{Colores.RESET}")
+            continue
+        _pausa()
 
 
 # =============================================================================
@@ -74,10 +73,16 @@ def submenu_configurar_pases():
     claves = list(PASES.keys())
     while True:
         print(f"\n{Colores.CYAN}=== CONFIGURAR PASES DE OPTIMIZACIÓN ==={Colores.RESET}")
-        for i, clave in enumerate(claves, 1):
-            nombre, nivel, _ = PASES[clave]
-            marca = f"{Colores.VERDE}[X]{Colores.RESET}" if clave in PASES_ACTIVOS else "[ ]"
-            print(f"{i}. {marca} {nivel:<18} {nombre}")
+        # Los pases se muestran agrupados por tipo: locales, globales, ciclos y mirilla
+        for nivel, explicacion in NIVELES.items():
+            print(f"\n  {Colores.AZUL}{nivel}{Colores.RESET} — {explicacion}")
+            for i, clave in enumerate(claves, 1):
+                nombre, nivel_pase, _ = PASES[clave]
+                if nivel_pase == nivel:
+                    marca = f"{Colores.VERDE}[X]{Colores.RESET}" if clave in PASES_ACTIVOS else "[ ]"
+                    print(f"    {i}. {marca} {nombre}")
+                    print(f"          {DESCRIPCION_PASES[clave]}")
+        print()
         print("T. Activar todos    N. Desactivar todos    0. Terminar")
         opc = input("\nNúmero de pase para alternar: ").strip().upper()
         if opc == "0":
@@ -158,9 +163,16 @@ def submenu_optimizacion(res):
         _pausa()
 
 
+def _archivos_de_tests(extension):
+    """Archivos de la carpeta /tests con la extensión indicada (.cuad o .txt)."""
+    if not os.path.isdir(DIRECTORIO_TESTS):
+        return []
+    return [os.path.join(DIRECTORIO_TESTS, f) for f in sorted(os.listdir(DIRECTORIO_TESTS)) if f.endswith(extension)]
+
+
 def menu_archivo_cuadruplos():
     """Optimiza directamente un archivo de cuádruplos (.cuad), p. ej. los casos de /tests."""
-    archivos = [r for r in listar_tests() if r.endswith(".cuad")]
+    archivos = _archivos_de_tests(".cuad")
     print(f"\n{Colores.CYAN}Archivos de cuádruplos disponibles en /tests:{Colores.RESET}")
     for i, ruta in enumerate(archivos, 1):
         print(f"  {i}. {os.path.basename(ruta)}")
@@ -175,19 +187,6 @@ def menu_archivo_cuadruplos():
         print(f"{Colores.ROJO}Error al leer los cuádruplos: {e}{Colores.RESET}")
         return
     submenu_optimizacion(res)
-
-
-def menu_suite_pruebas():
-    """Ejecuta todos los archivos de /tests y muestra la matriz comparativa de métricas."""
-    filas = ejecutar_suite(pases_activos=PASES_ACTIVOS)
-    print("\n" + reporte.matriz_suite(filas))
-    sel = input("\nNúmero de fila para ver su detalle (ENTER para volver): ").strip()
-    if sel.isdigit() and 1 <= int(sel) <= len(filas):
-        fila = filas[int(sel) - 1]
-        if "resultado" in fila:
-            submenu_optimizacion(fila["resultado"])
-        else:
-            print(f"{Colores.ROJO}{fila['error']}{Colores.RESET}")
 
 
 def resumen_analisis(valido, err_lex, err_sint, rep_sem):
@@ -255,9 +254,8 @@ def modo_terminal():
         print("1. Probar Expresiones de Prueba Obligatorias (Con declaraciones válidas)")
         print("2. Cargar código desde archivo (.txt)")
         print("3. Ingresar expresión manualmente")
-        print("4. Optimizar archivo de cuádruplos (.cuad)")
-        print("5. Ejecutar suite de pruebas de optimización (/tests)")
-        print("6. Volver")
+        print("4. Optimizar un caso de prueba de cuádruplos (.cuad)")
+        print("5. Volver")
 
         opc = input("Selecciona opción: ").strip()
         codigo = ""
@@ -276,7 +274,7 @@ def modo_terminal():
                 continue
 
         elif opc == "2":
-            fuentes = [r for r in listar_tests() if r.endswith(".txt")]
+            fuentes = _archivos_de_tests(".txt")
             if fuentes:
                 print("\nProgramas de prueba en /tests:")
                 for i, r in enumerate(fuentes, 1):
@@ -308,9 +306,6 @@ def modo_terminal():
             menu_archivo_cuadruplos()
             continue
         elif opc == "5":
-            menu_suite_pruebas()
-            continue
-        elif opc == "6":
             break
         else:
             print(f"{Colores.ROJO}Opción no válida.{Colores.RESET}")

@@ -4,16 +4,20 @@ modulos/optimizacion
 Motor de Optimización de Código Intermedio (independiente de la máquina).
 
 Estructura:
-  cuadruplo.py       Representación formal de la IR (clase Cuadruplo) y lector de archivos .cuad
-  generador_ir.py    AST -> cuádruplos con etiquetas y saltos (si / sino / mientras)
-  bloques.py         FASE 1: líderes, bloques básicos, CFG, dominadores, ciclos, liveness
-  pases_locales.py   FASE 2 nivel 1: plegado, simplificación algebraica, CSE local
-  pases_globales.py  FASE 2 nivel 2: propagación de constantes/copias, código muerto, LICM
-  mirilla.py         FASE 2 nivel 3: saltos redundantes, cargas/almacenamientos redundantes
-  validador.py       FASE 3: intérprete y verificación de equivalencia
-  optimizador.py     Pipeline (punto fijo) + métricas
+  cuadruplo.py       Clase Cuadruplo (IR formal), conversión de los cuádruplos del generador
+                     de código intermedio y lector de archivos .cuad
+  bloques.py         FASE 1 · Flujo de control: líderes, bloques básicos, grafo de flujo (CFG),
+                     ciclos y variables vivas
+  pases_locales.py   FASE 2 · Nivel 1, pases LOCALES (dentro de un solo bloque básico):
+                     plegado de constantes, simplificación algebraica, subexpresiones comunes
+  pases_globales.py  FASE 2 · Nivel 2, pases GLOBALES (entre bloques, usando el CFG):
+                     propagación de constantes y copias, código muerto / inalcanzable;
+                     y pase de CICLOS: movimiento de código invariante (LICM)
+  mirilla.py         FASE 2 · Nivel 3, pase de MIRILLA (pocas instrucciones seguidas):
+                     saltos redundantes, cargas/almacenamientos redundantes
+  validador.py       FASE 3 · Validación: ejecuta original y optimizado y compara resultados
+  optimizador.py     Orquestador: repite los pases hasta que ninguno cambie nada + métricas
   reporte.py         Formato de salida para CLI y GUI
-  suite.py           Ejecución de la carpeta /tests y matriz de métricas
 
 Uso rápido:
     from modulos.optimizacion import optimizar_desde_ast, optimizar_archivo_cuadruplos
@@ -21,10 +25,9 @@ Uso rápido:
 
 import re
 
-from modulos.optimizacion.cuadruplo import Cuadruplo, parsear_cuadruplos
-from modulos.optimizacion.generador_ir import generar_cuadruplos_desde_ast
+from modulos.optimizacion.cuadruplo import Cuadruplo, parsear_cuadruplos, generar_cuadruplos_desde_ast
 from modulos.optimizacion.optimizador import (
-    PASES, PASES_POR_DEFECTO, Optimizador, optimizar_programa
+    PASES, PASES_POR_DEFECTO, NIVELES, DESCRIPCION_PASES, Optimizador, optimizar_programa
 )
 from modulos.optimizacion import reporte
 
@@ -68,7 +71,7 @@ def reoptimizar(resultado, pases_activos):
 
 
 __all__ = [
-    "Cuadruplo", "PASES", "PASES_POR_DEFECTO", "Optimizador", "optimizar_programa",
+    "Cuadruplo", "PASES", "PASES_POR_DEFECTO", "NIVELES", "DESCRIPCION_PASES", "Optimizador", "optimizar_programa",
     "optimizar_desde_ast", "optimizar_texto_cuadruplos", "optimizar_archivo_cuadruplos",
     "reoptimizar", "extraer_salidas_fuente", "generar_cuadruplos_desde_ast",
     "parsear_cuadruplos", "reporte",

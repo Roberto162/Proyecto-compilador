@@ -23,10 +23,9 @@ from modulos.codigo_intermedio import (
 
 # Módulo de optimización de código intermedio
 from modulos.optimizacion import (
-    PASES, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
+    PASES, NIVELES, optimizar_desde_ast, optimizar_archivo_cuadruplos, reoptimizar, reporte
 )
 from modulos.optimizacion.bloques import exportar_dot
-from modulos.optimizacion.suite import ejecutar_suite
 
 ESPACIOS_POR_TAB = 4
 
@@ -135,8 +134,11 @@ class InterfazCompilador:
     def __init__(self, root):
         self.root = root
         self.root.title("Compilador & Generador de Código Intermedio")
-        self.root.geometry("1100x800")
-        self.root.minsize(900, 650)
+        # El tamaño se adapta a la pantalla (en pantallas pequeñas no se corta la parte de abajo)
+        ancho = min(1150, self.root.winfo_screenwidth() - 60)
+        alto = min(820, self.root.winfo_screenheight() - 100)
+        self.root.geometry(f"{ancho}x{alto}")
+        self.root.minsize(800, 500)
         self.resultado_opt = None
 
         # Se aplica el estilo oscuro y se inicializan todos los componentes
@@ -147,15 +149,25 @@ class InterfazCompilador:
     # CONSTRUCCIÓN DE LA INTERFAZ
     # =====================================================================
     def _crear_componentes(self):
+        # La barra de estado se coloca primero para que nunca quede fuera de la ventana
+        self.lbl_estado = ttk.Label(self.root, text="Estado: Listo.", relief="sunken", anchor="w")
+        self.lbl_estado.pack(side="bottom", fill="x")
+
+        # Panel dividido: arrastra la línea entre el editor y los resultados para cambiar sus tamaños
+        self.panel_principal = ttk.PanedWindow(self.root, orient="vertical")
+        self.panel_principal.pack(fill="both", expand=True, padx=10, pady=5)
+
         # Frame superior
-        frame_top = ttk.LabelFrame(self.root, text=" Código Fuente de Entrada ", padding=10)
-        frame_top.pack(fill="x", padx=10, pady=5)
+        frame_top = ttk.LabelFrame(self.panel_principal, text=" Código Fuente de Entrada ", padding=8)
+        self.panel_principal.add(frame_top, weight=1)
 
-        self.txt_entrada = EditorCodigo(frame_top, height=10)
-        self.txt_entrada.pack(fill="both", expand=True, pady=(0, 5))
-
+        # La fila de botones se coloca ANTES que el editor (abajo del recuadro) para que nunca
+        # quede oculta al hacer pequeño el panel superior
         frame_btn = ttk.Frame(frame_top, style="Panel.TFrame")
-        frame_btn.pack(fill="x")
+        frame_btn.pack(side="bottom", fill="x", pady=(5, 0))
+
+        self.txt_entrada = EditorCodigo(frame_top, height=6)
+        self.txt_entrada.pack(side="top", fill="both", expand=True)
 
         ttk.Button(frame_btn, text="📁 Cargar Archivo (.txt)", command=self.cargar_archivo).pack(side="left", padx=2)
         ttk.Button(frame_btn, text="🚀 Analizar y Generar Código", command=self.procesar_codigo).pack(side="left", padx=2)
@@ -179,8 +191,8 @@ class InterfazCompilador:
         self.cb_pruebas.bind("<<ComboboxSelected>>", self.cargar_prueba_seleccionada)
 
         # Notebook Principal
-        frame_bottom = ttk.LabelFrame(self.root, text=" Resultados del Análisis y Generación ", padding=10)
-        frame_bottom.pack(fill="both", expand=True, padx=10, pady=5)
+        frame_bottom = ttk.LabelFrame(self.panel_principal, text=" Resultados del Análisis y Generación ", padding=8)
+        self.panel_principal.add(frame_bottom, weight=4)
 
         self.notebook = ttk.Notebook(frame_bottom)
         self.notebook.pack(fill="both", expand=True)
@@ -218,8 +230,19 @@ class InterfazCompilador:
         # Tab 5: Optimización de Código Intermedio
         self._crear_tab_optimizacion()
 
-        self.lbl_estado = ttk.Label(self.root, text="Estado: Listo.", relief="sunken", anchor="w")
-        self.lbl_estado.pack(side="bottom", fill="x")
+    def _alternar_pases(self):
+        """Muestra u oculta las casillas de los pases para dejar más espacio a los resultados."""
+        self._pases_visibles = not self._pases_visibles
+        if self._pases_visibles:
+            self.frame_pases.pack(fill="x", pady=(6, 0))
+        else:
+            self.frame_pases.pack_forget()
+        self._actualizar_boton_pases()
+
+    def _actualizar_boton_pases(self):
+        activos = sum(v.get() for v in self.vars_pases.values())
+        flecha = "▾" if self._pases_visibles else "▸"
+        self.btn_pases.config(text=f"⚙ Pases ({activos}/{len(self.vars_pases)}) {flecha}")
 
     def _sub_tab(self, notebook, titulo):
         frame = ttk.Frame(notebook)
@@ -232,22 +255,44 @@ class InterfazCompilador:
         self.tab_optimizacion = ttk.Frame(self.notebook)
         self.notebook.add(self.tab_optimizacion, text=" 🛠 Optimización ")
 
-        # Barra de control: pases activos + acciones
-        frame_ctrl = ttk.LabelFrame(self.tab_optimizacion, text=" Pases de optimización ", padding=6)
+        # Barra de control: una sola fila de botones; las casillas de pases se muestran/ocultan
+        frame_ctrl = ttk.Frame(self.tab_optimizacion, style="Panel.TFrame", padding=4)
         frame_ctrl.pack(fill="x", padx=5, pady=(5, 0))
 
-        self.vars_pases = {}
-        for i, (clave, (nombre, nivel, _)) in enumerate(PASES.items()):
-            var = tk.BooleanVar(value=True)
-            self.vars_pases[clave] = var
-            ttk.Checkbutton(frame_ctrl, text=f"{nivel.split(' · ')[0]}: {nombre}", variable=var).grid(
-                row=i // 3, column=i % 3, sticky="w", padx=4, pady=1)
-
         frame_acc = ttk.Frame(frame_ctrl, style="Panel.TFrame")
-        frame_acc.grid(row=3, column=0, columnspan=3, sticky="w", pady=(6, 0))
+        frame_acc.pack(fill="x")
+        self.btn_pases = ttk.Button(frame_acc, style="Secundario.TButton", command=self._alternar_pases)
+        self.btn_pases.pack(side="left", padx=2)
+
+        # Casillas de pases agrupadas por tipo (local, global, ciclos, mirilla) con su explicación
+        self.frame_pases = ttk.Frame(frame_ctrl, style="Panel.TFrame")      # oculto al inicio
+        self.vars_pases = {}
+        for fila, (nivel, explicacion) in enumerate(NIVELES.items()):
+            grupo = ttk.LabelFrame(self.frame_pases, text=f" {nivel} ", padding=4)
+            grupo.grid(row=fila // 2, column=fila % 2, sticky="nsew", padx=3, pady=2)
+            ttk.Label(grupo, text=explicacion, style="Panel.TLabel", foreground="#90A4AE",
+                      wraplength=430, justify="left").pack(anchor="w")
+            for clave, (nombre, nivel_pase, _) in PASES.items():
+                if nivel_pase == nivel:
+                    var = tk.BooleanVar(value=True)
+                    self.vars_pases[clave] = var
+                    ttk.Checkbutton(grupo, text=nombre, variable=var,
+                                    command=self._actualizar_boton_pases).pack(anchor="w")
+        self.frame_pases.columnconfigure(0, weight=1)
+        self.frame_pases.columnconfigure(1, weight=1)
+        self._pases_visibles = False
+        self._actualizar_boton_pases()
+
+        # Casos de prueba de optimización (archivos .cuad de la carpeta /tests)
+        ttk.Label(frame_acc, text="  Casos:", style="Panel.TLabel").pack(side="left")
+        self.casos_cuad = sorted(f for f in os.listdir(DIRECTORIO_TESTS) if f.endswith(".cuad")) \
+            if os.path.isdir(DIRECTORIO_TESTS) else []
+        self.cb_casos_opt = ttk.Combobox(frame_acc, state="readonly", width=30, values=self.casos_cuad)
+        self.cb_casos_opt.pack(side="left", padx=2)
+        self.cb_casos_opt.bind("<<ComboboxSelected>>", self.cargar_caso_optimizacion)
+
         ttk.Button(frame_acc, text="🔁 Re-optimizar", command=self.reoptimizar_actual).pack(side="left", padx=2)
-        ttk.Button(frame_acc, text="📄 Optimizar archivo .cuad", command=self.optimizar_archivo_cuad).pack(side="left", padx=2)
-        ttk.Button(frame_acc, text="🧪 Suite /tests", command=self.ejecutar_suite_gui).pack(side="left", padx=2)
+        ttk.Button(frame_acc, text="📄 Abrir otro .cuad", command=self.optimizar_archivo_cuad).pack(side="left", padx=2)
         ttk.Button(frame_acc, text="💾 Exportar reporte", style="Secundario.TButton",
                    command=self.exportar_reporte_opt).pack(side="left", padx=2)
 
@@ -280,7 +325,6 @@ class InterfazCompilador:
         self.txt_opt_bloques = self._sub_tab(self.sub_notebook_opt, " Bloques Básicos / CFG ")
         self.txt_opt_traza = self._sub_tab(self.sub_notebook_opt, " Traza de Pases ")
         self.txt_opt_metricas = self._sub_tab(self.sub_notebook_opt, " Métricas y Validación ")
-        self.txt_opt_suite = self._sub_tab(self.sub_notebook_opt, " Suite de Pruebas ")
 
     # =====================================================================
     # ENTRADA DE CÓDIGO
@@ -418,16 +462,23 @@ class InterfazCompilador:
         estados = {num: estado for num, _, estado, _, _ in reporte.estado_instrucciones(res)}
 
         # Panel izquierdo: original coloreado según lo que le ocurrió a cada instrucción
+        encabezado = f"{'#':>3}  {'OP':<8}{'ARG 1':<10}{'ARG 2':<10}{'RES':<9}  TAC\n" + "-" * 60 + "\n"
+        self.txt_opt_original.insert(tk.END, encabezado)
+        self.txt_opt_optimizado.insert(tk.END, encabezado)
+
+        def fila(i, q):
+            op, a1, a2, r = q.campos_visibles()
+            return f"{i:>3}  {op:<8}{a1:<10}{a2:<10}{r:<9}  {q.tac()}\n"
+
         for i, q in enumerate(res.original, 1):
             estado = estados.get(q.origen, "igual")
-            self.txt_opt_original.insert(tk.END, f"({i:>2}) {q.tac()}\n",
-                                         () if estado == "igual" else (estado,))
+            self.txt_opt_original.insert(tk.END, fila(i, q), () if estado == "igual" else (estado,))
         # Panel derecho: optimizado con la transformación aplicada
         for i, q in enumerate(res.optimizado, 1):
             tag = "movida" if any(n.startswith("LICM") for n in q.notas) else ("modificada" if q.notas else ())
-            self.txt_opt_optimizado.insert(tk.END, f"({i:>2}) {q.tac()}\n", tag)
+            self.txt_opt_optimizado.insert(tk.END, fila(i, q), tag)
             if q.notas:
-                self.txt_opt_optimizado.insert(tk.END, f"       ↳ {'; '.join(q.notas)}\n", "nota")
+                self.txt_opt_optimizado.insert(tk.END, f"      ↳ {'; '.join(q.notas)}\n", "nota")
 
         m = res.metricas
         self.lbl_opt_original.config(
@@ -453,14 +504,7 @@ class InterfazCompilador:
             return
         self.mostrar_resultado_optimizacion(reoptimizar(self.resultado_opt, self._pases_seleccionados()))
 
-    def optimizar_archivo_cuad(self):
-        ruta = filedialog.askopenfilename(
-            title="Seleccionar archivo de cuádruplos",
-            initialdir=DIRECTORIO_TESTS if os.path.isdir(DIRECTORIO_TESTS) else None,
-            filetypes=[("Cuádruplos", "*.cuad"), ("Todos los archivos", "*.*")]
-        )
-        if not ruta:
-            return
+    def _mostrar_optimizacion_de_archivo(self, ruta):
         try:
             res = optimizar_archivo_cuadruplos(ruta, self._pases_seleccionados())
         except Exception as e:
@@ -470,13 +514,20 @@ class InterfazCompilador:
         self.notebook.select(self.tab_optimizacion)
         self.sub_notebook_opt.select(0)
 
-    def ejecutar_suite_gui(self):
-        filas = ejecutar_suite(pases_activos=self._pases_seleccionados())
-        self.txt_opt_suite.delete("1.0", tk.END)
-        self.txt_opt_suite.insert(tk.END, reporte.matriz_suite(filas))
-        self.notebook.select(self.tab_optimizacion)
-        self.sub_notebook_opt.select(len(self.sub_notebook_opt.tabs()) - 1)
-        self.lbl_estado.config(text=f"Estado: Suite ejecutada ({len(filas)} archivos).")
+    def cargar_caso_optimizacion(self, event=None):
+        """Optimiza el caso de prueba (.cuad) elegido en la lista."""
+        nombre = self.cb_casos_opt.get()
+        if nombre:
+            self._mostrar_optimizacion_de_archivo(os.path.join(DIRECTORIO_TESTS, nombre))
+
+    def optimizar_archivo_cuad(self):
+        ruta = filedialog.askopenfilename(
+            title="Seleccionar archivo de cuádruplos",
+            initialdir=DIRECTORIO_TESTS if os.path.isdir(DIRECTORIO_TESTS) else None,
+            filetypes=[("Cuádruplos", "*.cuad"), ("Todos los archivos", "*.*")]
+        )
+        if ruta:
+            self._mostrar_optimizacion_de_archivo(ruta)
 
     def exportar_reporte_opt(self):
         if self.resultado_opt is None:

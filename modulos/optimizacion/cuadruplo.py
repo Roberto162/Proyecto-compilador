@@ -3,6 +3,13 @@ modulos/optimizacion/cuadruplo.py
 =================================
 Representación formal de la IR (Representación Intermedia) usada por el optimizador.
 
+Los cuádruplos son LOS MISMOS que produce el Generador de Código Intermedio
+(modulos/codigo_intermedio.py), en el mismo orden y con los mismos campos. La diferencia
+es sólo de formato: el generador los entrega como diccionarios para mostrarlos en tabla, y
+aquí se convierten en objetos `Cuadruplo` (lo que pide el proyecto: "estructura formal,
+evitando la manipulación de texto plano"), con métodos para saber qué variables lee y
+escribe cada instrucción.
+
 Cada instrucción es un objeto `Cuadruplo(op, arg1, arg2, resultado)`; nunca se
 manipula texto plano dentro de los pases. Además del cuádruplo clásico, cada
 instrucción guarda:
@@ -251,6 +258,20 @@ def numerar(codigo):
 
 def tuplas(codigo):
     return [q.tupla() for q in codigo]
+
+
+# ---------------------------------------------------------------------------
+# Conexión con el Generador de Código Intermedio
+# ---------------------------------------------------------------------------
+def convertir_cuadruplos(lista_dicts):
+    """Convierte la salida del generador ({'operador','arg1','arg2','resultado'}) en objetos Cuadruplo."""
+    return numerar([Cuadruplo(d["operador"], d["arg1"], d["arg2"], d["resultado"]) for d in lista_dicts])
+
+
+def generar_cuadruplos_desde_ast(ast_raiz):
+    """AST -> cuádruplos de codigo_intermedio.py -> lista de Cuadruplo (entrada del optimizador)."""
+    from modulos.codigo_intermedio import GeneradorCodigoIntermedio
+    return convertir_cuadruplos(GeneradorCodigoIntermedio(ast_raiz).generar_cuadruplos())
 
 
 # ---------------------------------------------------------------------------

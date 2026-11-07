@@ -44,6 +44,30 @@ PASES = {
 }
 PASES_POR_DEFECTO = list(PASES.keys())
 
+# Qué significa cada nivel (se muestra en la GUI, en la terminal y en la traza)
+NIVELES = {
+    "Nivel 1 · Local": "Pases LOCALES: trabajan dentro de un solo bloque básico, "
+                       "sin cruzar etiquetas ni saltos.",
+    "Nivel 2 · Global": "Pases GLOBALES: usan el grafo de flujo (CFG) para seguir los valores "
+                        "entre bloques, por todos los caminos posibles.",
+    "Nivel 2 · Ciclos": "Pase de CICLOS: detecta los ciclos del grafo y saca de ellos los cálculos "
+                        "que dan lo mismo en cada vuelta.",
+    "Nivel 3 · Mirilla": "Pase de MIRILLA (peephole): revisa pocas instrucciones seguidas para quitar "
+                         "saltos, etiquetas y copias redundantes.",
+}
+
+# Qué hace cada pase, con un ejemplo
+DESCRIPCION_PASES = {
+    "plegado":     "Calcula en compilación las operaciones entre constantes: t1 = 4 * 10  ->  t1 = 40",
+    "algebraica":  "Aplica identidades: x*1 -> x, x+0 -> x, x*0 -> 0, x-x -> 0; y x*2 -> x+x (reducción de fuerza)",
+    "cse":         "Si una operación ya se calculó en el bloque, reutiliza el resultado: t3 = a + b  ->  t3 = t1",
+    "prop_const":  "Sustituye una variable por su valor constante si es el mismo en todos los caminos",
+    "prop_copias": "Tras una copia t3 = x, usa x directamente en lugar de t3",
+    "dce":         "Elimina bloques a los que nunca se llega y asignaciones cuyo valor nadie vuelve a leer",
+    "licm":        "Mueve antes del ciclo los cálculos cuyos operandos no cambian dentro de él",
+    "mirilla":     "Quita saltos a la línea siguiente, encadena saltos, borra etiquetas sin uso y a = b; b = a",
+}
+
 
 @dataclass
 class PasoTraza:

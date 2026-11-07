@@ -7,6 +7,7 @@ comparación original vs. optimizado, traza de pases, métricas y validación.
 
 from modulos.optimizacion.bloques import formatear_bloques
 from modulos.optimizacion.cuadruplo import tuplas
+from modulos.optimizacion.optimizador import NIVELES, DESCRIPCION_PASES
 
 SEP = "=" * 92
 
@@ -95,6 +96,9 @@ def traza(res):
         lineas.append(f"Paso {k} · Ronda {p.ronda} · [{p.nivel}] {p.nombre}   "
                       f"({len(p.antes)} -> {len(p.despues)} instrucciones)")
         lineas.append(SEP)
+        lineas.append(f"   Tipo de pase : {NIVELES.get(p.nivel, '')}")
+        lineas.append(f"   Qué hace     : {DESCRIPCION_PASES.get(p.clave, '')}")
+        lineas.append("   Cambios:")
         for m in p.mensajes:
             lineas.append(f"   • {m}")
         lineas.append("   Código resultante:")
@@ -178,36 +182,3 @@ def reporte_completo(res):
     if res.esperado is not None:
         partes.insert(4, tabla_cuadruplos(res.esperado, "SALIDA ESPERADA DEL CASO"))
     return ("\n\n" + SEP + "\n\n").join(partes)
-
-
-def matriz_suite(filas):
-    """Matriz comparativa de métricas de toda la suite /tests."""
-    enc = (f"{'ARCHIVO':<34}{'ANTES':>6}{'DESP.':>6}{'RED.%':>8}{'TEMP-':>7}"
-           f"{'DIN.ANT':>9}{'DIN.DESP':>9}{'ESPER.':>8}{'VALID.':>9}")
-    lineas = ["--- MATRIZ COMPARATIVA DE MÉTRICAS (SUITE /tests) ---", "", enc, "-" * len(enc)]
-    for f in filas:
-        if f.get("error"):
-            lineas.append(f"{f['archivo']:<34}  ERROR: {f['error']}")
-            continue
-        r = f["resultado"]
-        m = r.metricas
-        esp = {None: "—", True: "✅", False: "❌"}[r.coincide_esperado]
-        lineas.append(
-            f"{f['archivo']:<34}{m['instr_antes']:>6}{m['instr_despues']:>6}{m['reduccion_pct']:>7.1f}%"
-            f"{m['temporales_antes'] - m['temporales_despues']:>7}"
-            f"{m['dinamicas_antes']:>9.1f}{m['dinamicas_despues']:>9.1f}{esp:>8}"
-            f"{'✅' if m['equivalente'] else '❌':>9}")
-    validos = [f for f in filas if not f.get("error")]
-    if validos:
-        total_a = sum(f["resultado"].metricas["instr_antes"] for f in validos)
-        total_d = sum(f["resultado"].metricas["instr_despues"] for f in validos)
-        lineas.append("-" * len(enc))
-        lineas.append(f"{'TOTAL':<34}{total_a:>6}{total_d:>6}"
-                      f"{(100 * (total_a - total_d) / total_a if total_a else 0):>7.1f}%")
-        ok = all(f["resultado"].metricas["equivalente"] for f in validos)
-        lineas.append("")
-        lineas.append(f"Preservación semántica en toda la suite: {'SÍ ✅' if ok else 'NO ❌'}")
-    lineas.append("")
-    lineas.append("ANTES/DESP. = instrucciones estáticas · TEMP- = temporales eliminados · "
-                  "DIN. = instrucciones ejecutadas (promedio)")
-    return "\n".join(lineas)
