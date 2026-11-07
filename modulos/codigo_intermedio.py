@@ -4,7 +4,12 @@ modulos/codigo_intermedio.py
 Generador de Código Intermedio a partir del AST.
 Sólo traduce: no calcula valores, no verifica tipos y no optimiza.
 
-Produce cuatro representaciones del programa completo, incluyendo control de flujo:
+Las cuatro representaciones se obtienen del MISMO AST. Su objetivo principal son las
+expresiones algebraicas (+ - * /, paréntesis y menos unario), respetando precedencia y
+asociatividad; las estructuras de control (si / sino / mientras) se traducen a etiquetas
+y saltos para que el programa completo quede en código intermedio.
+
+Representaciones:
 1. Notación Polaca (Prefija)          - recorrido en preorden
 2. Código P (Máquina de Pila)         - recorrido en posorden (PUSH / operación / STORE, FJP / UJP / LAB)
 3. Triplos Indexados (op, arg1, arg2) - los resultados se referencian por índice (n) y los saltos a [n]
@@ -160,9 +165,8 @@ class GeneradorCodigoIntermedio:
                 elif t == 'OP_ESPECIAL':
                     var = st.izq.valor
                     instrucciones.extend([f"PUSH {var}", OPCODES_CODIGO_P["reverse"], f"{OPCODES_CODIGO_P['=']} {var}"])
-                else:                                   # expresión suelta: se descarta su valor
+                else:                                   # expresión suelta: su resultado queda en la pila
                     expr(st)
-                    instrucciones.append(OPCODES_CODIGO_P['pop'])
 
         bloque(self.raiz)
         return instrucciones
@@ -295,8 +299,8 @@ def obtener_polaca_str(ast_raiz: NodoAST) -> str:
 def obtener_codigo_p_str(ast_raiz: NodoAST) -> str:
     gen = GeneradorCodigoIntermedio(ast_raiz)
     salida = ["--- 2. CÓDIGO P (MÁQUINA DE PILA) ---\n"]
-    for i, inst in enumerate(gen.generar_codigo_p()):
-        salida.append(f"  {i:>3}  {inst}")
+    for inst in gen.generar_codigo_p():
+        salida.append(f"  {inst}")
     return "\n".join(salida)
 
 
@@ -305,19 +309,21 @@ def obtener_triplos_str(ast_raiz: NodoAST) -> str:
     salida = ["--- 3. TRIPLOS INDEXADOS ---\n"]
     salida.append(f"{'ÍNDICE':<10}{'OPERADOR':<12}{'ARGUMENTO 1':<20}{'ARGUMENTO 2':<20}")
     salida.append("-" * 62)
-    for t in gen.generar_triplos():
+    triplos = gen.generar_triplos()
+    for t in triplos:
         salida.append(f"{t['indice']:<10}{t['operador']:<12}{t['arg1']:<20}{t['arg2']:<20}")
-    salida.append("\n(n) = resultado del triplo n · [n] = salto al triplo n")
+    if any(t['operador'] in ('goto', 'ifFalse') for t in triplos):
+        salida.append("\n(n) = resultado del triplo n · [n] = salto al triplo n")
     return "\n".join(salida)
 
 
 def obtener_cuadruplos_str(ast_raiz: NodoAST) -> str:
     gen = GeneradorCodigoIntermedio(ast_raiz)
     salida = ["--- 4. CUÁDRUPLOS ---\n"]
-    salida.append(f"{'#':>3}  {'OPERADOR':<12}{'ARGUMENTO 1':<20}{'ARGUMENTO 2':<20}{'RESULTADO':<12}")
-    salida.append("-" * 69)
-    for i, c in enumerate(gen.generar_cuadruplos(), 1):
-        salida.append(f"{i:>3}  {c['operador']:<12}{c['arg1'] or '_':<20}{c['arg2'] or '_':<20}{c['resultado'] or '_':<12}")
+    salida.append(f"{'OPERADOR':<12}{'ARGUMENTO 1':<20}{'ARGUMENTO 2':<20}{'RESULTADO':<12}")
+    salida.append("-" * 64)
+    for c in gen.generar_cuadruplos():
+        salida.append(f"{c['operador']:<12}{c['arg1']:<20}{c['arg2']:<20}{c['resultado']:<12}")
     return "\n".join(salida)
 
 
