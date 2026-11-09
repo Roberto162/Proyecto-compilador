@@ -1,7 +1,7 @@
 """
 main.py
 =======
-Punto de entrada principal del compilador con submenú interactivo para Código Intermedio.
+Punto de entrada principal del compilador 
 """
 
 import os
@@ -305,7 +305,7 @@ def modo_gui():
 def menu_principal():
     while True:
         print(f"\n{Colores.AZUL}============================================")
-        print("  GENERADOR DE CÓDIGO INTERMEDIO COMPLETO  ")
+        print("FASES DEL COMPILADOR  ")
         print(f"============================================{Colores.RESET}")
         print("1. Modo Terminal (CLI)")
         print("2. Modo Interfaz Gráfica (GUI)")

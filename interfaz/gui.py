@@ -132,7 +132,7 @@ def crear_area_texto(parent, wrap="none"):
 class InterfazCompilador:
     def __init__(self, root):
         self.root = root
-        self.root.title("Compilador & Generador de Código Intermedio")
+        self.root.title("Compilador de Código (FASE DE OPTIMIZACION)")
         # El tamaño se adapta a la pantalla (en pantallas pequeñas no se corta la parte de abajo)
         ancho = min(1150, self.root.winfo_screenwidth() - 60)
         alto = min(820, self.root.winfo_screenheight() - 100)

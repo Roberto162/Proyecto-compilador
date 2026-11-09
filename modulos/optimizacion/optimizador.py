@@ -158,7 +158,10 @@ class Optimizador:
         # Si no se indican variables de salida se asume (de forma conservadora)
         # que TODAS las variables del usuario son observables al final.
         self.salidas = set(salidas) if salidas else variables_usuario(self.original)
-        self.pases_activos = [p for p in PASES if p in (pases_activos or PASES_POR_DEFECTO)]
+        # None = no se indicó nada -> se usan todos los pases.
+# []   = el usuario desmarcó todos -> no se aplica ningún pase (el código queda igual).
+        seleccion = PASES_POR_DEFECTO if pases_activos is None else pases_activos
+        self.pases_activos = [p for p in PASES if p in seleccion]
         self.max_rondas = max_rondas
 
     def optimizar(self):
